@@ -1,0 +1,203 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    name: Verify before publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      # Gate the whole release on the same quality bar as CI, so tagging a
+      # broken or unreviewed commit can't ship it to npm irrevocably.
+      - name: Check (typecheck / lint / format / docs drift)
+        run: npm run check
+      - name: Test (vitest — e2e suites self-skip without After Effects)
+        run: npm test
+
+  github-release:
+    name: Create GitHub Release
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            echo "release ${GITHUB_REF_NAME} already exists — skipping"
+          else
+            gh release create "${GITHUB_REF_NAME}" \
+              --generate-notes \
+              --title "${GITHUB_REF_NAME}"
+          fi
+
+  npm-publish:
+    name: Publish to npm
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Verify tag matches package.json / server.json
+        run: |
+          set -eu
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          SRV_VERSION="$(node -p "require('./server.json').version")"
+          SRV_PKG_VERSION="$(node -p "require('./server.json').packages[0].version")"
+          for v in "$PKG_VERSION" "$SRV_VERSION" "$SRV_PKG_VERSION"; do
+            if [ "$v" != "$TAG_VERSION" ]; then
+              echo "::error::version mismatch: tag=$TAG_VERSION package.json=$PKG_VERSION server.json=$SRV_VERSION packages[0]=$SRV_PKG_VERSION"
+              exit 1
+            fi
+          done
+
+      - run: npm ci
+      - run: npm run build
+
+      - name: Verify npm CLI supports Trusted Publishing
+        run: |
+          set -eu
+          NPM_VERSION="$(npm --version)"
+          REQUIRED="11.5.1"
+          if [ "$(printf '%s\n%s\n' "$REQUIRED" "$NPM_VERSION" | sort -V | head -n1)" != "$REQUIRED" ]; then
+            echo "::error::npm $NPM_VERSION < $REQUIRED — Trusted Publishing requires 11.5.1+"
+            exit 1
+          fi
+
+      - name: Publish (Trusted Publishing via OIDC)
+        run: |
+          set -eu
+          VERSION="${GITHUB_REF_NAME#v}"
+          if npm view "@kumoproductions/mcp-aftereffects@${VERSION}" version >/dev/null 2>&1; then
+            echo "@kumoproductions/mcp-aftereffects@${VERSION} already on npm — skipping publish"
+            exit 0
+          fi
+          npm publish --access public
+
+  mcp-registry-publish:
+    name: Publish to MCP Registry
+    needs: npm-publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install mcp-publisher
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Pinned rather than 'latest' so a bad or malicious upstream release
+          # can't silently enter the publish job. Bump deliberately.
+          MCP_PUBLISHER_VERSION: v1.7.9
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/mcp-publisher"
+          gh release download "$MCP_PUBLISHER_VERSION" \
+            --repo modelcontextprotocol/registry \
+            --pattern "mcp-publisher_linux_amd64.tar.gz" \
+            --dir "$RUNNER_TEMP/mcp-publisher"
+          tar -xzf "$RUNNER_TEMP/mcp-publisher/mcp-publisher_linux_amd64.tar.gz" -C "$RUNNER_TEMP/mcp-publisher"
+          echo "$RUNNER_TEMP/mcp-publisher" >> "$GITHUB_PATH"
+
+      - name: Wait for npm propagation
+        run: |
+          set -eu
+          VERSION="${GITHUB_REF_NAME#v}"
+          for i in $(seq 1 30); do
+            if npm view "@kumoproductions/mcp-aftereffects@${VERSION}" version >/dev/null 2>&1; then
+              echo "npm has version ${VERSION}"
+              exit 0
+            fi
+            echo "waiting for npm to expose ${VERSION} (attempt $i)..."
+            sleep 10
+          done
+          echo "::error::npm did not surface ${VERSION} within 5 minutes"
+          exit 1
+
+      - name: Skip if version already on MCP Registry
+        id: registry_check
+        run: |
+          set -eu
+          VERSION="${GITHUB_REF_NAME#v}"
+          URL="https://registry.modelcontextprotocol.io/v0/servers/io.github.kumoproductions%2Fmcp-aftereffects/versions/${VERSION}"
+          STATUS="$(curl -sS -o /dev/null -w '%{http_code}' "$URL")"
+          if [ "$STATUS" = "200" ]; then
+            echo "already published — skipping"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "not yet published (HTTP $STATUS) — proceeding"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Login (GitHub OIDC)
+        if: steps.registry_check.outputs.skip != 'true'
+        run: mcp-publisher login github-oidc
+
+      - name: Publish
+        if: steps.registry_check.outputs.skip != 'true'
+        run: mcp-publisher publish
+
+  ghpkg-mirror:
+    name: Mirror to GitHub Packages
+    needs: npm-publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          registry-url: https://npm.pkg.github.com
+          scope: "@kumoproductions"
+
+      - run: npm ci
+      - run: npm run build
+
+      - name: Rewrite publishConfig for GitHub Packages
+        run: |
+          node -e "const f='package.json';const fs=require('node:fs');const p=JSON.parse(fs.readFileSync(f,'utf8'));p.publishConfig={access:'public',registry:'https://npm.pkg.github.com'};fs.writeFileSync(f, JSON.stringify(p,null,2)+'\n');"
+
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          VERSION="${GITHUB_REF_NAME#v}"
+          if npm view "@kumoproductions/mcp-aftereffects@${VERSION}" --registry=https://npm.pkg.github.com version >/dev/null 2>&1; then
+            echo "@kumoproductions/mcp-aftereffects@${VERSION} already on GitHub Packages — skipping"
+            exit 0
+          fi
+          npm publish

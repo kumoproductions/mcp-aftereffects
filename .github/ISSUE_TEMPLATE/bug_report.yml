@@ -1,0 +1,71 @@
+name: Bug report
+description: A tool behaves incorrectly, the dispatcher won't respond, or a crash happens.
+labels: [bug, triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug! Please include the information below so we can reproduce quickly.
+        The dispatcher log lives in the IPC mailbox, whose path the server prints to stderr at startup —
+        by default `%TEMP%\mcp-aftereffects\runtime\dispatcher.log` on Windows and
+        `$TMPDIR/mcp-aftereffects/runtime/dispatcher.log` on macOS.
+  - type: input
+    id: ae-version
+    attributes:
+      label: After Effects version
+      placeholder: "e.g. 2026 (26.x)"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: "e.g. Windows 11 24H2 / macOS 15"
+    validations:
+      required: true
+  - type: input
+    id: node
+    attributes:
+      label: Node.js version
+      placeholder: "output of `node -v`"
+    validations:
+      required: true
+  - type: input
+    id: client
+    attributes:
+      label: MCP client
+      placeholder: "e.g. Claude Desktop 0.9.2 / Claude Code"
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: The exact tool call (name + arguments) or chain of calls.
+      placeholder: |
+        1. call `ae_do` with { operation: "keyframe.add", args: { ... } }
+        2. …
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: dispatcher-log
+    attributes:
+      label: Dispatcher log (relevant excerpt)
+      description: Tail of `dispatcher.log` from the mailbox. Redact anything sensitive.
+      render: text
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context

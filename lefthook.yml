@@ -1,0 +1,56 @@
+# https://lefthook.dev/configuration/
+# Run `npx lefthook install` once after cloning to register the hooks.
+
+pre-commit:
+  jobs:
+    # Read-only linters can run concurrently — they don't touch files.
+    - name: lint
+      group:
+        parallel: true
+        jobs:
+          - name: oxlint
+            glob: "*.{ts,tsx,js,mjs,cjs}"
+            run: npx oxlint {staged_files}
+
+          # Two passes over everything that ends up inside AE: the ES3 / AE API
+          # scan of jsx/ (catches let/const/arrow leaks), and the injection lint
+          # over every generated-JSX template literal under src/ (catches a tool
+          # argument embedded without jsxVal). The glob covers all of src/
+          # because the second pass trusts the `jsx*` encoder helpers by name,
+          # which only holds while their own definitions are scanned too.
+          - name: lint-jsx
+            glob:
+              - "jsx/**/*.jsx"
+              - "src/**/*.ts"
+            run: npm run lint:jsx
+
+    # File-mutating (stage_fixed) jobs run sequentially: oxfmt and lf-fix
+    # match overlapping globs, and running them in parallel raced on the same
+    # staged file (a lost update could commit unformatted / CRLF text).
+    - name: fix
+      group:
+        parallel: false
+        jobs:
+          - name: oxfmt
+            glob: "*.{ts,tsx,js,mjs,cjs,json,jsonc,md,yml,yaml}"
+            stage_fixed: true
+            run: npx oxfmt --no-error-on-unmatched-pattern {staged_files}
+
+          # Guard against CRLF sneaking in on Windows checkouts. Auto-fix via
+          # stage_fixed; bail if a file has unstaged changes so `git add -p`
+          # selections are not silently widened. Logic lives in
+          # scripts/fix-crlf.pl because multi-line `run: |` blocks fail to parse
+          # on some Windows shells.
+          - name: lf-fix
+            glob: "*.{ts,tsx,js,mjs,cjs,jsx,json,jsonc,md,yml,yaml}"
+            stage_fixed: true
+            run: perl scripts/fix-crlf.pl {staged_files}
+
+          # Regenerate docs/TOOLS.md whenever the tool registry changes and stage
+          # the result, so CI's `--check` guard never catches drift the
+          # contributor didn't cause on purpose. Runs `npm run docs:tools`.
+          - name: tools-doc
+            glob:
+              - "src/tools/**/*.ts"
+              - "scripts/generate-tools-doc.mjs"
+            run: npm run docs:tools && git add docs/TOOLS.md

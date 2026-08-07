@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: lint + typecheck + build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Typecheck tests
+        run: npm run typecheck:test
+
+      - name: Lint (oxlint)
+        run: npm run lint
+
+      - name: Format check (oxfmt)
+        run: npm run format:check
+
+      - name: Build
+        run: npm run build
+
+      - name: Test (vitest)
+        # No After Effects on CI runners, so the e2e suites skip themselves via
+        # probeAe. This step still catches collection-time breakage — a bad
+        # import or top-level-await error in any test file fails the run. The
+        # offline suites (schema validation, fixtures, jsx ES3 lint) run fully.
+        run: npm test
+
+      - name: Tool docs drift
+        run: node scripts/generate-tools-doc.mjs --check
+
+      # LF enforcement: fail if any tracked text file contains CR. Uses the
+      # .gitattributes normalization rather than file-by-file grep so new file
+      # types stay covered automatically.
+      - name: CRLF guard
+        run: |
+          set -eu
+          git add --renormalize .
+          if ! git diff --quiet; then
+            echo "::error::CRLF detected in tracked files. Run 'git add --renormalize .' locally."
+            git diff --stat
+            exit 1
+          fi

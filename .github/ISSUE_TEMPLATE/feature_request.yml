@@ -1,0 +1,27 @@
+name: Feature request
+description: Ask for a new tool, operation, parameter, or workflow to be supported.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: Describe the workflow or capability you're missing.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed tool / operation
+      description: |
+        If you already know what the MCP tool or `ae_do` operation should look like, sketch it.
+        Example: `ae_do({ operation: "mask.feather", args: { comp, layer, mask, feather } })`
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you've tried
+      description: e.g. did you use `eval.run` as a workaround?
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context

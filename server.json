@@ -1,0 +1,20 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.kumoproductions/mcp-aftereffects",
+  "description": "MCP server for Adobe After Effects — comp/layer introspection, atomic undo-grouped ops, JSON project export/import, frame rendering.",
+  "repository": {
+    "url": "https://github.com/kumoproductions/mcp-aftereffects",
+    "source": "github"
+  },
+  "version": "0.1.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@kumoproductions/mcp-aftereffects",
+      "version": "0.1.0",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

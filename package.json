@@ -1,0 +1,83 @@
+{
+  "name": "@kumoproductions/mcp-aftereffects",
+  "version": "0.1.0",
+  "description": "TypeScript MCP server for Adobe After Effects (Windows & macOS) — project/comp/layer introspection, atomic undo-grouped operations, JSON project export/import, and single-frame rendering via file IPC.",
+  "keywords": [
+    "adobe",
+    "after-effects",
+    "aftereffects",
+    "claude",
+    "extendscript",
+    "llm",
+    "mcp",
+    "model-context-protocol",
+    "motion-graphics"
+  ],
+  "homepage": "https://github.com/kumoproductions/mcp-aftereffects#readme",
+  "bugs": {
+    "url": "https://github.com/kumoproductions/mcp-aftereffects/issues"
+  },
+  "license": "MIT",
+  "author": {
+    "name": "kumo.productions, Inc.",
+    "url": "https://github.com/kumoproductions"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kumoproductions/mcp-aftereffects.git"
+  },
+  "bin": {
+    "mcp-aftereffects": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "jsx",
+    "fixtures",
+    "LICENSE",
+    "README.md"
+  ],
+  "type": "module",
+  "main": "dist/index.js",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc --watch",
+    "clean": "rimraf dist",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "typecheck:test": "tsc --noEmit -p tsconfig.test.json",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check",
+    "lint:jsx": "vitest run tests/lint-jsx.test.ts",
+    "docs:tools": "npm run build && node scripts/generate-tools-doc.mjs",
+    "docs:tools:check": "npm run build && node scripts/generate-tools-doc.mjs --check",
+    "check": "npm run typecheck && npm run typecheck:test && npm run lint && npm run format:check && npm run lint:jsx && npm run docs:tools:check",
+    "prepare": "lefthook install",
+    "prepublishOnly": "npm run build",
+    "version": "node scripts/sync-server-version.mjs && git add server.json"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "lefthook": "^2.1.6",
+    "oxfmt": "^0.45.0",
+    "oxlint": "^1.60.0",
+    "rimraf": "^6.1.3",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.4"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "mcpName": "io.github.kumoproductions/mcp-aftereffects"
+}

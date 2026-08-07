@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false,
+    // Tests run on Node 24, which has Array#toSorted etc. (ES2023). src stays on
+    // the ES2022 lib since the shipped server targets that.
+    "lib": ["ES2023"]
+  },
+  "include": ["src/**/*", "tests/**/*"]
+}
