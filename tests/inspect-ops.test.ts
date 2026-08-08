@@ -11,6 +11,14 @@ import { layerInfoTool } from "../src/tools/layer-info.js";
 import "../src/operations/index.js";
 import { nullTransport } from "./helpers/null-transport.js";
 
+/**
+ * render.frame rejects a relative outPath via `path.isAbsolute`, which is
+ * platform-dependent: "C:/tmp/check.png" is absolute on Windows and relative
+ * everywhere else, so hardcoding it made this suite pass locally and fail on
+ * Linux CI for a reason unrelated to what it tests.
+ */
+const ABS_OUT_PATH = process.platform === "win32" ? "C:/tmp/check.png" : "/tmp/check.png";
+
 afterEach(() => {
   delete process.env.AE_MCP_READONLY;
 });
@@ -35,7 +43,7 @@ describe("read/render operation twins", () => {
     const jsx = getOp("batch.run")!.toJsx({
       ops: [
         { operation: "layer.create_null", args: { comp: "Main" } },
-        { operation: "render.frame", args: { comp: "Main", time: 0, outPath: "C:/tmp/check.png" } },
+        { operation: "render.frame", args: { comp: "Main", time: 0, outPath: ABS_OUT_PATH } },
         { operation: "comp.info", args: { comp: "Main" } },
       ],
     });

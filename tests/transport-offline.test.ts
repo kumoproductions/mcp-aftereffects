@@ -20,8 +20,14 @@ import {
 } from "../src/config.js";
 import { FileIpcTransport } from "../src/transport/FileIpcTransport.js";
 
-/** An executable that exists and starts, but will never write a response. */
-const INERT_EXE = "C:/Windows/System32/cmd.exe";
+/**
+ * An executable that exists and starts, but will never write a response.
+ *
+ * Per-platform because `resolveAfterFxPath` stats it: a Windows-only path made
+ * every timeout and busy-lock test fail with AE_NOT_FOUND on Linux CI, before
+ * the behaviour under test could run at all.
+ */
+const INERT_EXE = process.platform === "win32" ? "C:/Windows/System32/cmd.exe" : "/bin/true";
 
 const savedExe = process.env.AE_MCP_EXE;
 
