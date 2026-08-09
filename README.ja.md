@@ -55,37 +55,55 @@ After Effects 側にインストールするものはありません。プラグ
 
 ## クイックスタート
 
-1. **クローンしてビルドします:**
+クローンするチェックアウトはなく、After Effects 側にインストールするものもありません。[動作要件](#動作要件)を満たしている前提で、次の 2 ステップです。
 
-   ```
-   git clone https://github.com/kumoproductions/mcp-aftereffects.git
-   cd mcp-aftereffects
-   npm install
-   npm run build
-   ```
+1. **After Effects を手動で起動し、プロジェクトを開いて（または作成して）おきます。** トランスポートは既存の AE インスタンスを対象とし、ウォーム状態の呼び出しは 500 ms〜1 秒程度です。AE が起動していない場合は最初の呼び出しが AE をコールド起動しますが（10〜30 秒）、AE が何らかのユーザー操作を経るまでは不安定です。先に自分で AE を起動しておくのが確実です。
 
-2. **MCP クライアントへ登録します。** Claude Code の場合は `.mcp.json` に追加します（チェックアウトへの絶対パスを使います）:
+2. **MCP サーバーを CLI から疎通確認します:**
 
-   ```json
-   {
-     "mcpServers": {
-       "aftereffects": {
-         "command": "node",
-         "args": ["/absolute/path/to/mcp-aftereffects/dist/index.js"]
-       }
-     }
-   }
+   ```bash
+   echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"ae_version_info","arguments":{}}}' \
+     | npx -y @kumoproductions/mcp-aftereffects
+   #   → {"result":{"content":[{"type":"text","text":"{\n  \"ok\": true,\n  \"result\": {\n    \"app\": {\n      \"version\": \"26.3x87\", …
    ```
 
-   パッケージが npm に公開されれば、`"command": "npx", "args": ["-y", "@kumoproductions/mcp-aftereffects"]` でローカルのチェックアウトなしに動きます。
-
-3. **After Effects を手動で起動し、プロジェクトを開いて（または作成して）おきます。** トランスポートは既存の AE インスタンスを対象とし、ウォーム状態の呼び出しは 500 ms〜1 秒程度です。AE が起動していない場合は最初の呼び出しが AE をコールド起動しますが（10〜30 秒）、AE が何らかのユーザー操作を経るまでは不安定です。先に自分で AE を起動しておくのが確実です。
-
-続けてこう試してみてください。
+あとは MCP クライアントへ登録して（[クライアント設定](#クライアント設定)を参照）、こう試してみてください。
 
 > 「このプロジェクトにはどんなコンポジションがある？ `Main` に赤い平面を追加して、確認できるようにフレーム 0 をレンダリングして。」
 
 LLM は `ae_project_info` → `ae_do` → `ae_render_frame` の順に呼び出します。
+
+ローカルのチェックアウトから動かしたい場合は、[CONTRIBUTING.md](./CONTRIBUTING.md) のソースインストール手順を参照してください。
+
+## クライアント設定
+
+`npx` 経由で起動する stdio の MCP サーバーとして登録します。パッケージは必要時に取得されるため、ビルド手順も、手作業での更新もありません。
+
+```json
+{
+  "mcpServers": {
+    "aftereffects": {
+      "command": "npx",
+      "args": ["-y", "@kumoproductions/mcp-aftereffects"]
+    }
+  }
+}
+```
+
+| クライアント              | 登録先                                                                                                                                 |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude Code               | `claude mcp add aftereffects -- npx -y @kumoproductions/mcp-aftereffects`、またはプロジェクトルートの `.mcp.json` に上記の JSON を記述 |
+| Claude Desktop            | `%APPDATA%\Claude\claude_desktop_config.json`（Windows）・`~/Library/Application Support/Claude/claude_desktop_config.json`（macOS）   |
+| その他の MCP クライアント | stdio サーバーの登録方法は各クライアントのドキュメントを参照                                                                           |
+
+モデルに許可する範囲を絞るには、同じエントリに `env` マップを追加します。[環境変数](#環境変数)のスイッチはすべてサーバープロセスの環境変数から読まれます。調査専用のセッションなら次の 1 行です。
+
+```json
+"env": { "AE_MCP_READONLY": "1" }
+```
+
+> [!NOTE]
+> **公式のリリース物は 2 か所からのみ配布されます。** npm パッケージ [`@kumoproductions/mcp-aftereffects`](https://www.npmjs.com/package/@kumoproductions/mcp-aftereffects) と、`kumoproductions/mcp-aftereffects` の [Releases ページ](https://github.com/kumoproductions/mcp-aftereffects/releases)です。それ以外の場所から入手した、このサーバーを名乗るスコープ付き npm パッケージは信頼しないでください。
 
 ## 環境変数
 

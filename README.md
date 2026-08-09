@@ -53,37 +53,55 @@ There is nothing to install inside After Effects — no plugin, no panel, no soc
 
 ## Quickstart
 
-1. **Clone & build:**
+There is no checkout to clone and nothing to install inside After Effects. Assuming you already meet the [Requirements](#requirements):
 
-   ```
-   git clone https://github.com/kumoproductions/mcp-aftereffects.git
-   cd mcp-aftereffects
-   npm install
-   npm run build
-   ```
+1. **Start After Effects manually and open (or create) a project.** The transport targets the existing AE instance; a warm call takes ~500 ms–1 s. If AE isn't running, the first call cold-launches it (10–30 s) and is unreliable until AE has been through some user interaction — starting AE yourself first is the dependable path.
 
-2. **Register with your MCP client.** For Claude Code, add to your `.mcp.json` (use the absolute path to your checkout):
+2. **Smoke-test the MCP server from the CLI:**
 
-   ```json
-   {
-     "mcpServers": {
-       "aftereffects": {
-         "command": "node",
-         "args": ["/absolute/path/to/mcp-aftereffects/dist/index.js"]
-       }
-     }
-   }
+   ```bash
+   echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"ae_version_info","arguments":{}}}' \
+     | npx -y @kumoproductions/mcp-aftereffects
+   #   → {"result":{"content":[{"type":"text","text":"{\n  \"ok\": true,\n  \"result\": {\n    \"app\": {\n      \"version\": \"26.3x87\", …
    ```
 
-   Once the package is published to npm, `"command": "npx", "args": ["-y", "@kumoproductions/mcp-aftereffects"]` works without a local checkout.
-
-3. **Start After Effects manually and open (or create) a project.** The transport targets the existing AE instance; a warm call takes ~500 ms–1 s. If AE isn't running, the first call cold-launches it (10–30 s) and is unreliable until AE has been through some user interaction — starting AE yourself first is the dependable path.
-
-Then try:
+Then wire it into your MCP client (see [Client configuration](#client-configuration)) and try:
 
 > _"What comps are in this project? Add a red solid to `Main` and render frame 0 so I can see it."_
 
 The LLM will call `ae_project_info` → `ae_do` → `ae_render_frame` in sequence.
+
+Prefer running from a local checkout? See [CONTRIBUTING.md](./CONTRIBUTING.md) for the source-install flow.
+
+## Client configuration
+
+Register it as a stdio MCP server launched through `npx` — the package is fetched on demand, so there is no build step and nothing to keep up to date by hand:
+
+```json
+{
+  "mcpServers": {
+    "aftereffects": {
+      "command": "npx",
+      "args": ["-y", "@kumoproductions/mcp-aftereffects"]
+    }
+  }
+}
+```
+
+| Client            | Where that goes                                                                                                                     |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Claude Code       | `claude mcp add aftereffects -- npx -y @kumoproductions/mcp-aftereffects`, or the JSON above in `.mcp.json` at your project root    |
+| Claude Desktop    | `%APPDATA%\Claude\claude_desktop_config.json` (Windows) · `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) |
+| Other MCP clients | see the client's docs for registering a stdio server                                                                                |
+
+To scope what the model is allowed to do, add an `env` map to the same entry — every switch in [Environment variables](#environment-variables) is read from the server process's environment. Inspection-only sessions want:
+
+```json
+"env": { "AE_MCP_READONLY": "1" }
+```
+
+> [!NOTE]
+> **Official releases only come from two places:** the npm package [`@kumoproductions/mcp-aftereffects`](https://www.npmjs.com/package/@kumoproductions/mcp-aftereffects) and the [Releases page](https://github.com/kumoproductions/mcp-aftereffects/releases) under `kumoproductions/mcp-aftereffects`. If you obtained a scoped npm package from anywhere else claiming to be this server, treat it as untrusted.
 
 ## Environment variables
 
