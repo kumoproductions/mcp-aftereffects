@@ -133,12 +133,23 @@ jobs:
           set -eu
           VERSION="${GITHUB_REF_NAME#v}"
           for i in $(seq 1 30); do
-            if npm view "@kumoproductions/mcp-aftereffects@${VERSION}" version >/dev/null 2>&1; then
+            if OUTPUT="$(npm view "@kumoproductions/mcp-aftereffects@${VERSION}" version 2>&1)"; then
               echo "npm has version ${VERSION}"
               exit 0
             fi
+            # Only a 404 means "not published yet". Anything else — a network
+            # blip, a registry 5xx — is a real fault, and retrying it buries
+            # the cause under five minutes of waiting and a wrong diagnosis.
+            case "$OUTPUT" in
+              *E404*) ;;
+              *)
+                echo "$OUTPUT"
+                echo "::error::npm view failed for a reason other than 404 — see the output above"
+                exit 1
+                ;;
+            esac
             echo "waiting for npm to expose ${VERSION} (attempt $i)..."
-            sleep 10
+            [ "$i" -eq 30 ] || sleep 10
           done
           echo "::error::npm did not surface ${VERSION} within 5 minutes"
           exit 1
@@ -196,8 +207,14 @@ jobs:
         run: |
           set -eu
           VERSION="${GITHUB_REF_NAME#v}"
-          if npm view "@kumoproductions/mcp-aftereffects@${VERSION}" --registry=https://npm.pkg.github.com version >/dev/null 2>&1; then
+          # The scope has to be redirected by config key, not by --registry: the
+          # repo's .npmrc pins @kumoproductions to npmjs, and a scoped registry
+          # setting outranks the flag. With --registry this guard queried npmjs,
+          # always found the version npm-publish had just shipped, and so skipped
+          # the mirror on every release.
+          if npm view "@kumoproductions/mcp-aftereffects@${VERSION}" \
+            --@kumoproductions:registry=https://npm.pkg.github.com version >/dev/null 2>&1; then
             echo "@kumoproductions/mcp-aftereffects@${VERSION} already on GitHub Packages — skipping"
             exit 0
           fi
-          npm publish
+          npm publish --@kumoproductions:registry=https://npm.pkg.github.com
