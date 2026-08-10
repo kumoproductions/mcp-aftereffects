@@ -58,7 +58,7 @@ export const RENDER_FRAME_FN = `
                 size: [c.width, c.height]
             };
         } catch (eRf) {
-            return { ok: false, error: "saveFrameToPng failed: " + eRf };
+            return { ok: false, error: "saveFrameToPng failed: " + AE.errText(eRf) };
         }
     }
 `;

@@ -79,7 +79,7 @@ AE.importProject = function (doc, opts) {
                     warn("addSolid produced no source for '" + fi.name + "'");
                 }
             } catch (eSol) {
-                warn("failed to create solid '" + fi.name + "': " + eSol);
+                warn("failed to create solid '" + fi.name + "': " + AE.errText(eSol));
             }
         } else if (fi.sourceKind === "file") {
             try {
@@ -105,7 +105,7 @@ AE.importProject = function (doc, opts) {
                     remap[String(fi.id)] = importedItem;
                 }
             } catch (eF) {
-                warn("failed to import file '" + fi.file + "': " + eF);
+                warn("failed to import file '" + fi.file + "': " + AE.errText(eF));
             }
         } else {
             warn("unsupported sourceKind '" + fi.sourceKind + "' for item '" + fi.name + "'; skipped");
@@ -137,7 +137,7 @@ AE.importProject = function (doc, opts) {
         // Comp markers
         try {
             if (ci.markers) AE.applyPropertyValue(comp.markerProperty, ci.markers);
-        } catch (eCm) { warn("comp markers restore failed for '" + ci.name + "': " + eCm); }
+        } catch (eCm) { warn("comp markers restore failed for '" + ci.name + "': " + AE.errText(eCm)); }
         remap[String(ci.id)] = comp;
         compBindings.push({ comp: comp, spec: ci });
     }
@@ -207,7 +207,7 @@ AE.importProject = function (doc, opts) {
                             if (effSpec.name) addedEffect.name = effSpec.name;
                             AE.applyPropertyGroup(addedEffect, effSpec, warn);
                         } catch (eEff) {
-                            warn("could not add effect " + effSpec.matchName + " on layer '" + lspec.name + "': " + eEff);
+                            warn("could not add effect " + effSpec.matchName + " on layer '" + lspec.name + "': " + AE.errText(eEff));
                         }
                     }
                 }
@@ -221,7 +221,7 @@ AE.importProject = function (doc, opts) {
                             if (mSpec.name) addedMask.name = mSpec.name;
                             AE.applyPropertyGroup(addedMask, mSpec, warn);
                         } catch (eMsk) {
-                            warn("could not add mask '" + mSpec.name + "' on layer '" + lspec.name + "': " + eMsk);
+                            warn("could not add mask '" + mSpec.name + "' on layer '" + lspec.name + "': " + AE.errText(eMsk));
                         }
                     }
                 }
@@ -235,7 +235,7 @@ AE.importProject = function (doc, opts) {
                         var contentsRoot = newLayer.property("Contents");
                         AE.importShapeContents(contentsRoot, lspec.contentsGroup, warn);
                     } catch (eShape) {
-                        warn("shape contents import failed for '" + lspec.name + "': " + eShape);
+                        warn("shape contents import failed for '" + lspec.name + "': " + AE.errText(eShape));
                     }
                 }
                 // Time Remap — must be enabled BEFORE applying keyframes
@@ -246,7 +246,7 @@ AE.importProject = function (doc, opts) {
                             AE.applyPropertyValue(newLayer.property("Time Remap"), lspec.timeRemapProperty);
                         }
                     } catch (eTr) {
-                        warn("time remap restore failed for '" + lspec.name + "': " + eTr);
+                        warn("time remap restore failed for '" + lspec.name + "': " + AE.errText(eTr));
                     }
                 }
                 // Material Options (3D layers)
@@ -265,10 +265,10 @@ AE.importProject = function (doc, opts) {
                 if (lspec.markers) {
                     try {
                         AE.applyPropertyValue(newLayer.property("Marker"), lspec.markers);
-                    } catch (eLm) { warn("layer markers failed for '" + lspec.name + "': " + eLm); }
+                    } catch (eLm) { warn("layer markers failed for '" + lspec.name + "': " + AE.errText(eLm)); }
                 }
             } catch (eLayer) {
-                warn("failed to create layer '" + (lspec.name || "?") + "' in comp '" + spec.name + "': " + eLayer);
+                warn("failed to create layer '" + (lspec.name || "?") + "' in comp '" + spec.name + "': " + AE.errText(eLayer));
             }
         }
     }
@@ -280,7 +280,7 @@ AE.importProject = function (doc, opts) {
         var tgt = remap[String(spc.id)];
         var par = remap[String(spc.parentFolderId)];
         if (tgt && par && par instanceof FolderItem) {
-            try { tgt.parentFolder = par; } catch (ePF) { warn("failed to set parentFolder on '" + spc.name + "': " + ePF); }
+            try { tgt.parentFolder = par; } catch (ePF) { warn("failed to set parentFolder on '" + spc.name + "': " + AE.errText(ePF)); }
         }
     }
 
@@ -300,7 +300,7 @@ AE.importProject = function (doc, opts) {
                 var parent = compDst2.layer(ls.parentIndex);
                 if (child && parent) child.parent = parent;
             } catch (eP) {
-                warn("failed to set parent for layer index " + ls.index + " in comp '" + spec2.name + "': " + eP);
+                warn("failed to set parent for layer index " + ls.index + " in comp '" + spec2.name + "': " + AE.errText(eP));
             }
         }
     }
@@ -342,7 +342,7 @@ AE.importShapeContents = function (target, spec, warn) {
             try { prop = target.property(ps.matchName); } catch (e1) {}
             if (!prop) { try { prop = target.property(ps.name); } catch (e2) {} }
             if (!prop) continue;
-            try { AE.applyPropertyValue(prop, ps); } catch (eAp) { if (warn) warn("shape property '" + ps.name + "': " + eAp); }
+            try { AE.applyPropertyValue(prop, ps); } catch (eAp) { if (warn) warn("shape property '" + ps.name + "': " + AE.errText(eAp)); }
         }
     }
     // Sub-groups: add them via addProperty with matchName, then recurse
@@ -355,7 +355,7 @@ AE.importShapeContents = function (target, spec, warn) {
             try { sub = target.property(gs.matchName); } catch (eSub1) {}
             if (!sub) {
                 try { sub = target.addProperty(gs.matchName); } catch (eAdd) {
-                    if (warn) warn("could not add shape group " + gs.matchName + ": " + eAdd);
+                    if (warn) warn("could not add shape group " + gs.matchName + ": " + AE.errText(eAdd));
                     continue;
                 }
             }
@@ -386,7 +386,7 @@ AE.applyPropertyGroup = function (target, spec, warn) {
                 continue;
             }
             try { AE.applyPropertyValue(prop, pspec); }
-            catch (eAp) { if (warn) warn("failed to apply property '" + pspec.name + "': " + eAp); }
+            catch (eAp) { if (warn) warn("failed to apply property '" + pspec.name + "': " + AE.errText(eAp)); }
         }
     }
     // Nested groups — only recurse if the matching subgroup already exists

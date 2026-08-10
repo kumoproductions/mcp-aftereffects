@@ -108,7 +108,7 @@ registerOp({
                 _res = _toComp ? _layer.sourcePointToComp(${jsxVal(args.point)}) : _layer.compPointToSource(${jsxVal(args.point)});
             } catch (eCv) {
                 _comp.time = _prevT;
-                return { ok: false, error: "conversion failed: " + eCv };
+                return { ok: false, error: "conversion failed: " + AE.errText(eCv) };
             }
             if (_t !== null) _comp.time = _prevT;
             return { ok: true, point: AE.valueToJson(_res) };

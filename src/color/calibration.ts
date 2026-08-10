@@ -95,7 +95,7 @@ export async function measureCaptureTransfer(
             }
             _tmp.saveFrameToPng(0, new File(${jsxVal(pngPath)}));
             _out.saved = true;
-        } catch (eCal) { _out.ok = false; _out.error = String(eCal); }
+        } catch (eCal) { _out.ok = false; _out.error = AE.errText(eCal); }
         try { _tmp.remove(); } catch (eRm) { /* leave for undo */ }
         for (var _j = 0; _j < _srcs.length; _j++) { try { _srcs[_j].remove(); } catch (eRs) { } }
         return _out;

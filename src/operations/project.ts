@@ -164,7 +164,7 @@ registerOp({
                 app.project.replaceFont(_fromFonts[0], _toFonts[0]);
                 return { ok: true, from: ${jsxVal(args.fromFont)}, to: ${jsxVal(args.toFont)} };
             } catch(e) {
-                return { ok: false, error: "replaceFont failed: " + e };
+                return { ok: false, error: "replaceFont failed: " + AE.errText(e) };
             }
         `;
   },
@@ -454,32 +454,32 @@ registerOp({
     const sets: string[] = [];
     if (args.bitsPerChannel !== undefined)
       sets.push(
-        `try { app.project.bitsPerChannel = ${jsxVal(args.bitsPerChannel)}; } catch (e) { _w.push("bitsPerChannel: " + e); }`,
+        `try { app.project.bitsPerChannel = ${jsxVal(args.bitsPerChannel)}; } catch (e) { _w.push("bitsPerChannel: " + AE.errText(e)); }`,
       );
     if (args.expressionEngine !== undefined)
       sets.push(
-        `try { app.project.expressionEngine = ${jsxVal(args.expressionEngine)}; } catch (e) { _w.push("expressionEngine: " + e); }`,
+        `try { app.project.expressionEngine = ${jsxVal(args.expressionEngine)}; } catch (e) { _w.push("expressionEngine: " + AE.errText(e)); }`,
       );
     if (args.workingSpace !== undefined)
       sets.push(
-        `try { app.project.workingSpace = ${jsxVal(args.workingSpace)}; } catch (e) { _w.push("workingSpace: " + e); }`,
+        `try { app.project.workingSpace = ${jsxVal(args.workingSpace)}; } catch (e) { _w.push("workingSpace: " + AE.errText(e)); }`,
       );
     if (args.workingGamma !== undefined)
       sets.push(
-        `try { app.project.workingGamma = ${jsxVal(args.workingGamma)}; } catch (e) { _w.push("workingGamma: " + e); }`,
+        `try { app.project.workingGamma = ${jsxVal(args.workingGamma)}; } catch (e) { _w.push("workingGamma: " + AE.errText(e)); }`,
       );
     if (args.linearBlending !== undefined)
       sets.push(
-        `try { app.project.linearBlending = ${jsxVal(args.linearBlending)}; } catch (e) { _w.push("linearBlending: " + e); }`,
+        `try { app.project.linearBlending = ${jsxVal(args.linearBlending)}; } catch (e) { _w.push("linearBlending: " + AE.errText(e)); }`,
       );
     if (args.timeDisplayType !== undefined)
       sets.push(`
         try {
             app.project.timeDisplayType = ${jsxVal(args.timeDisplayType)} === "frames" ? TimeDisplayType.FRAMES : TimeDisplayType.TIMECODE;
-        } catch (e) { _w.push("timeDisplayType: " + e); }`);
+        } catch (e) { _w.push("timeDisplayType: " + AE.errText(e)); }`);
     if (args.framesUseFeetFrames !== undefined)
       sets.push(
-        `try { app.project.framesUseFeetFrames = ${jsxVal(args.framesUseFeetFrames)}; } catch (e) { _w.push("framesUseFeetFrames: " + e); }`,
+        `try { app.project.framesUseFeetFrames = ${jsxVal(args.framesUseFeetFrames)}; } catch (e) { _w.push("framesUseFeetFrames: " + AE.errText(e)); }`,
       );
     if (args.framesCountType !== undefined)
       sets.push(`
@@ -487,10 +487,10 @@ registerOp({
             var _fcMap = { "start0": FramesCountType.FC_START_0, "start1": FramesCountType.FC_START_1, "timecode": FramesCountType.FC_TIMECODE_CONVERSION };
             if (_fcMap[${jsxVal(args.framesCountType)}] === undefined) { _w.push("framesCountType: unknown value"); }
             else { app.project.framesCountType = _fcMap[${jsxVal(args.framesCountType)}]; }
-        } catch (e) { _w.push("framesCountType: " + e); }`);
+        } catch (e) { _w.push("framesCountType: " + AE.errText(e)); }`);
     if (args.transparencyGridThumbnails !== undefined)
       sets.push(
-        `try { app.project.transparencyGridThumbnails = ${jsxVal(args.transparencyGridThumbnails)}; } catch (e) { _w.push("transparencyGridThumbnails: " + e); }`,
+        `try { app.project.transparencyGridThumbnails = ${jsxVal(args.transparencyGridThumbnails)}; } catch (e) { _w.push("transparencyGridThumbnails: " + AE.errText(e)); }`,
       );
     if (args.gpuAccelType !== undefined)
       sets.push(`
@@ -498,7 +498,7 @@ registerOp({
             var _gpuMap = { "software": GpuAccelType.SOFTWARE, "opencl": GpuAccelType.OPENCL, "cuda": GpuAccelType.CUDA, "metal": GpuAccelType.METAL };
             if (_gpuMap[${jsxVal(args.gpuAccelType)}] === undefined) { _w.push("gpuAccelType: unknown value"); }
             else { app.project.gpuAccelType = _gpuMap[${jsxVal(args.gpuAccelType)}]; }
-        } catch (e) { _w.push("gpuAccelType: " + e); }`);
+        } catch (e) { _w.push("gpuAccelType: " + AE.errText(e)); }`);
     return `
             var _w = [];
             ${sets.join("\n")}

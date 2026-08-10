@@ -190,7 +190,7 @@ registerOp({
     if (args.url !== undefined) sets.push(`_mv.url = ${jsxVal(args.url)};`);
     if (args.protectedRegion !== undefined)
       sets.push(
-        `try { _mv.protectedRegion = ${jsxVal(args.protectedRegion)}; } catch (ePr) { _w.push("protectedRegion: " + ePr); }`,
+        `try { _mv.protectedRegion = ${jsxVal(args.protectedRegion)}; } catch (ePr) { _w.push("protectedRegion: " + AE.errText(ePr)); }`,
       );
     return `
             ${jsxMarkerPreamble(args)}

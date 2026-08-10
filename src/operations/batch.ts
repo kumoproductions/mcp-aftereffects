@@ -93,7 +93,7 @@ registerOp({
                         _results.push(_r${i});
                     } catch(e) {
                         _failed++;
-                        _results.push({ ok: false, error: String(e) });
+                        _results.push({ ok: false, error: AE.errText(e) });
                         ${stopOnError ? "_stopped = true;" : ""}
                     }
                 } else {

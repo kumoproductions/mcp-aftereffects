@@ -1,6 +1,6 @@
-// Fixture for the generated-JSX injection lint. NOT part of the build: it
-// exists so the lint's own test can prove it still catches the pattern it was
-// written for. Every interpolation below is deliberately unsafe.
+// Fixture for the generated-JSX lint. NOT part of the build: it exists so the
+// lint's own test can prove it still catches the patterns it was written for.
+// Every interpolation below is deliberately unsafe.
 //
 // The `.fixture.ts` suffix keeps it out of src/, so the real lint passes never
 // see it and vitest never collects it as a suite.
@@ -22,6 +22,19 @@ export function badTernaryBranch(args: Record<string, unknown>): string {
         var _layer = AE.findLayer();
         ${args.name ? `_layer.name = "${args.name}";` : ""}
         return { ok: true };
+    `;
+}
+
+/**
+ * Both shapes of rendering a caught exception by coercion. Each throws inside
+ * the handler in real ExtendScript; each must be reported here.
+ */
+export function badErrorReporting(): string {
+  return `
+        var _w = [];
+        try { _layer.name = "x"; } catch (e) { _w.push("name: " + e); }
+        try { _layer.remove(); } catch (eRm) { _w.push(String(eRm)); }
+        return { ok: true, warnings: _w };
     `;
 }
 

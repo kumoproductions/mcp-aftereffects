@@ -21,7 +21,7 @@ registerOp({
                 try {
                     _rqi.outputModules[1].file = new File(${jsxVal(args.outputPath)});
                     _result.outputPath = ${jsxVal(args.outputPath)};
-                } catch(e) { _result.outputWarning = "could not set output path: " + e; }
+                } catch(e) { _result.outputWarning = "could not set output path: " + AE.errText(e); }
             `
       : "";
     return `
@@ -116,24 +116,24 @@ registerOp({
     const rqiSets: string[] = [];
     if (args.renderTemplate !== undefined)
       rqiSets.push(
-        `try { _rqi.applyTemplate(${jsxVal(args.renderTemplate)}); } catch (eRt) { _w.push("renderTemplate: " + eRt); }`,
+        `try { _rqi.applyTemplate(${jsxVal(args.renderTemplate)}); } catch (eRt) { _w.push("renderTemplate: " + AE.errText(eRt)); }`,
       );
     if (args.timeSpanStart !== undefined)
       rqiSets.push(
-        `try { _rqi.timeSpanStart = ${jsxVal(args.timeSpanStart)}; } catch (eTs) { _w.push("timeSpanStart: " + eTs); }`,
+        `try { _rqi.timeSpanStart = ${jsxVal(args.timeSpanStart)}; } catch (eTs) { _w.push("timeSpanStart: " + AE.errText(eTs)); }`,
       );
     if (args.timeSpanDuration !== undefined)
       rqiSets.push(
-        `try { _rqi.timeSpanDuration = ${jsxVal(args.timeSpanDuration)}; } catch (eTd) { _w.push("timeSpanDuration: " + eTd); }`,
+        `try { _rqi.timeSpanDuration = ${jsxVal(args.timeSpanDuration)}; } catch (eTd) { _w.push("timeSpanDuration: " + AE.errText(eTd)); }`,
       );
     const omSets: string[] = [];
     if (args.outputTemplate !== undefined)
       omSets.push(
-        `try { _om.applyTemplate(${jsxVal(args.outputTemplate)}); } catch (eOt) { _w.push("outputTemplate: " + eOt); }`,
+        `try { _om.applyTemplate(${jsxVal(args.outputTemplate)}); } catch (eOt) { _w.push("outputTemplate: " + AE.errText(eOt)); }`,
       );
     if (args.outputPath !== undefined)
       omSets.push(
-        `try { _om.file = new File(${jsxVal(args.outputPath)}); } catch (eOp) { _w.push("outputPath: " + eOp); }`,
+        `try { _om.file = new File(${jsxVal(args.outputPath)}); } catch (eOp) { _w.push("outputPath: " + AE.errText(eOp)); }`,
       );
     return `
             var rq = app.project.renderQueue;

@@ -156,6 +156,26 @@ After Effects' ExtendScript engine is ECMAScript 3. Everything that ends up **in
 - No template literals in the _output_ (the surrounding TS template literal is fine; the generated string must not contain backticks). Build strings with `+` concatenation.
 - No `Array.prototype.map` / `filter` / `forEach` / `indexOf` — plain `for` loops.
 - No trailing commas, no getters/setters, no `JSON` beyond what `json2.jsx` provides.
+- Never render a caught exception by coercion — see below.
+
+### Two ways ExtendScript is not JavaScript
+
+These are not style rules. Each one shipped as a bug that broke every tool call, and neither is visible when the same code is read as JavaScript.
+
+**Never write `"failed: " + e`.** ExtendScript cannot coerce an `Error` to a primitive, so the concatenation _itself_ throws `Object of type Error found where a Number, Array, or Property is needed` — from inside the handler whose job was to report the original failure. The real error is lost and a bogus one takes its place; in the dispatcher it escaped as far as AE's modal error dialog, which blocks scripting for the rest of the session and makes every later call look like a busy-lock timeout. `String(e)` has the same problem. Use `AE.errText(e)` from `jsx/helpers.jsx` (the dispatcher keeps a private copy, `describeError`, so it stays able to report failures if an `#include` did not take). Enforced by the `es-error-concat` rule in `tests/helpers/lint-jsx.ts` and by the matching pass in `tests/helpers/lint-codegen.ts`.
+
+**Never use truthiness to test membership of a dynamic key in a plain object.** ExtendScript hangs its operator-overload hooks off `Object.prototype` under one-character names, so `({})["-"]`, `["+"]`, `["*"]` and `["/"]` are each a **Function**, not `undefined`:
+
+```js
+// WRONG — passes for "-", then `out +=` throws on the Function it found:
+if (escMap[ch]) out += escMap[ch];
+
+// RIGHT — a hit is a string, or it is not a hit:
+var esc = escMap[ch];
+if (typeof esc === "string") out += esc;
+```
+
+Check the type you expect, or guard with `hasOwnProperty`. This is what made `json2.jsx` fail on every response id (all UUIDs, all hyphenated) on AE builds with no native `JSON`. Static analysis cannot see it; `tests/json-safety.test.ts` reproduces it by recreating the polluted prototype in Node, which is the only place the hazard is visible outside AE.
 
 `npm run lint:jsx` (a vitest suite, `tests/lint-jsx.test.ts`) runs two static passes. The first scans the files under `jsx/` for ES3 violations and AE API misuse. The second scans every template literal under `src/` for the injection rule below. Lefthook runs both on staged files too.
 

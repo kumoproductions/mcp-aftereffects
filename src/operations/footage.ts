@@ -123,42 +123,46 @@ registerOp({
   toJsx(args) {
     const sets: string[] = [];
     if (args.guessAlpha)
-      sets.push(`try { _src.guessAlphaMode(); } catch (e) { _w.push("guessAlpha: " + e); }`);
+      sets.push(
+        `try { _src.guessAlphaMode(); } catch (e) { _w.push("guessAlpha: " + AE.errText(e)); }`,
+      );
     if (args.alphaMode !== undefined)
       sets.push(`
         try {
             var _amMap = { "ignore": AlphaMode.IGNORE, "straight": AlphaMode.STRAIGHT, "premultiplied": AlphaMode.PREMULTIPLIED };
             if (_amMap[${jsxVal(args.alphaMode)}] === undefined) { _w.push("alphaMode: unknown value"); }
             else { _src.alphaMode = _amMap[${jsxVal(args.alphaMode)}]; }
-        } catch (e) { _w.push("alphaMode: " + e); }`);
+        } catch (e) { _w.push("alphaMode: " + AE.errText(e)); }`);
     if (args.premulColor !== undefined)
       sets.push(
-        `try { _src.premulColor = ${jsxVal(args.premulColor)}; } catch (e) { _w.push("premulColor: " + e); }`,
+        `try { _src.premulColor = ${jsxVal(args.premulColor)}; } catch (e) { _w.push("premulColor: " + AE.errText(e)); }`,
       );
     if (args.invertAlpha !== undefined)
       sets.push(
-        `try { _src.invertAlpha = ${jsxVal(args.invertAlpha)}; } catch (e) { _w.push("invertAlpha: " + e); }`,
+        `try { _src.invertAlpha = ${jsxVal(args.invertAlpha)}; } catch (e) { _w.push("invertAlpha: " + AE.errText(e)); }`,
       );
     if (args.conformFrameRate !== undefined)
       sets.push(
-        `try { _src.conformFrameRate = ${jsxVal(args.conformFrameRate)}; } catch (e) { _w.push("conformFrameRate: " + e); }`,
+        `try { _src.conformFrameRate = ${jsxVal(args.conformFrameRate)}; } catch (e) { _w.push("conformFrameRate: " + AE.errText(e)); }`,
       );
     if (args.loop !== undefined)
-      sets.push(`try { _src.loop = ${jsxVal(args.loop)}; } catch (e) { _w.push("loop: " + e); }`);
+      sets.push(
+        `try { _src.loop = ${jsxVal(args.loop)}; } catch (e) { _w.push("loop: " + AE.errText(e)); }`,
+      );
     if (args.fieldSeparation !== undefined)
       sets.push(`
         try {
             var _fsMap = { "off": FieldSeparationType.OFF, "upper": FieldSeparationType.UPPER_FIELD_FIRST, "lower": FieldSeparationType.LOWER_FIELD_FIRST };
             if (_fsMap[${jsxVal(args.fieldSeparation)}] === undefined) { _w.push("fieldSeparation: unknown value"); }
             else { _src.fieldSeparationType = _fsMap[${jsxVal(args.fieldSeparation)}]; }
-        } catch (e) { _w.push("fieldSeparation: " + e); }`);
+        } catch (e) { _w.push("fieldSeparation: " + AE.errText(e)); }`);
     if (args.highQualityFields !== undefined)
       sets.push(
-        `try { _src.highQualityFieldSeparation = ${jsxVal(args.highQualityFields)}; } catch (e) { _w.push("highQualityFields: " + e); }`,
+        `try { _src.highQualityFieldSeparation = ${jsxVal(args.highQualityFields)}; } catch (e) { _w.push("highQualityFields: " + AE.errText(e)); }`,
       );
     if (args.pixelAspect !== undefined)
       sets.push(
-        `try { _item.pixelAspect = ${jsxVal(args.pixelAspect)}; } catch (e) { _w.push("pixelAspect: " + e); }`,
+        `try { _item.pixelAspect = ${jsxVal(args.pixelAspect)}; } catch (e) { _w.push("pixelAspect: " + AE.errText(e)); }`,
       );
     return `
             ${jsxFootagePreamble(args)}

@@ -4,6 +4,34 @@
 
 var AE = AE || {};
 
+// ---------- Talking about exceptions ----------
+
+/**
+ * Render a caught exception as text. Use this instead of `"failed: " + e`,
+ * always — the concatenation is not the harmless shorthand it looks like.
+ * ExtendScript cannot coerce an Error to a primitive, so `+ e` throws on its
+ * own ("Object of type Error found where a Number, Array, or Property is
+ * needed") from inside the handler that was supposed to report the original
+ * failure: the real error is swallowed and a bogus one takes its place. In a
+ * generated operation that turns a recoverable warning into a failed call; in
+ * the dispatcher it used to escape as far as AE's modal error dialog.
+ *
+ * dispatcher.jsx carries its own copy of this so it can still report failures
+ * when an #include has not taken. Keep the two in step.
+ */
+AE.errText = function (e) {
+    try {
+        if (e === null || e === undefined) return "unknown error";
+        if (typeof e === "string") return e;
+        var msg = (e.message === undefined || e.message === null) ? "" : String(e.message);
+        if (msg.length === 0) msg = "error";
+        if (e.line !== undefined && e.line !== null) msg += " (line " + String(e.line) + ")";
+        return msg;
+    } catch (eFmt) {
+        return "unformattable error";
+    }
+};
+
 // ---------- Project item lookup ----------
 
 AE.findItemById = function (id) {

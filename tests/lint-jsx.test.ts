@@ -35,6 +35,14 @@ describe("generated-JSX injection lint", () => {
     expect(findings.length, report).toBe(0);
   });
 
+  it("nothing under src/ renders a caught exception by coercion", () => {
+    // Covered by the same pass; asserted separately because it is a different
+    // failure mode — not injection, but a handler that throws while handling.
+    const findings = lintCodegenDir(SRC_DIR).filter((f) => f.message.includes("coercion"));
+    const report = findings.map((f) => `${f.file}:${f.line}\n    > ${f.text}`).join("\n");
+    expect(findings.length, report).toBe(0);
+  });
+
   it("catches the injection pattern it exists to catch", () => {
     // Guard against the lint silently degrading into a no-op: a fixture with a
     // known-bad interpolation must still be reported.
@@ -47,5 +55,15 @@ describe("generated-JSX injection lint", () => {
     // …and it must still exempt the test itself, or every conditional
     // fragment in src/operations would be a false positive.
     expect(findings.every((f) => !f.text.includes("jsxVal(args."))).toBe(true);
+  });
+
+  it("catches both shapes of rendering an exception by coercion", () => {
+    const fixture = fileURLToPath(new URL("./fixtures/bad-codegen.fixture.ts", import.meta.url));
+    const findings = lintCodegenFile(fixture).filter((f) => f.message.includes("coercion"));
+    expect(findings.some((f) => f.text.includes('"name: " + e'))).toBe(true);
+    expect(findings.some((f) => f.text.includes("String(eRm)"))).toBe(true);
+    // `_w.push`, `_layer`, `AE.errText` and the like must not be swept up: the
+    // rule keys off catch-parameter names, not "starts with e".
+    expect(findings.length).toBe(2);
   });
 });

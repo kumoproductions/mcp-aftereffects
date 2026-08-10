@@ -1,4 +1,10 @@
-// Injection lint for generated ExtendScript.
+// Lint for generated ExtendScript. Two rules, both about things that are
+// invisible in the TypeScript but fatal once the string reaches AE:
+//
+//   1. injection — a tool argument interpolated raw (the security invariant
+//      below),
+//   2. exception-to-text — a caught exception rendered with `+` or String(),
+//      which throws inside the very handler meant to report the failure.
 //
 // The security invariant: a value that came from tool arguments must never be
 // interpolated raw into generated JSX. Raw interpolation is an injection
@@ -202,8 +208,28 @@ function templateLiteralSpans(src: string): Array<[number, number]> {
   return spans;
 }
 
+/**
+ * Catch-parameter names as this codebase writes them — `e`, `eRm`, `eCtx`,
+ * `err`. Kept deliberately narrow: an ordinary identifier that merely starts
+ * with `e` (`expr`, `entry`, `easing`) must not be mistaken for an exception.
+ */
+const ERROR_IDENT = "(?:e|e[A-Z][\\w$]*|err)";
+
+/**
+ * Rendering a caught exception into text by coercion. ExtendScript cannot
+ * convert an Error to a primitive, so `"failed: " + e` and `String(e)` throw
+ * where they stand — inside the handler that exists to report the original
+ * failure, which is then lost and replaced by a bogus one. `AE.errText(e)`
+ * reads `.message` instead and never throws.
+ */
+const ERROR_TO_TEXT: RegExp[] = [
+  new RegExp(`\\+\\s*${ERROR_IDENT}(?![\\w$(.])`, "g"),
+  new RegExp(`\\bString\\(\\s*${ERROR_IDENT}\\s*\\)`, "g"),
+];
+
 export function lintCodegenFile(filePath: string): CodegenFinding[] {
   const src = readFileSync(filePath, "utf8");
+  const lines = src.split(/\r?\n/);
   const findings: CodegenFinding[] = [];
   const lineStarts: number[] = [0];
   for (let i = 0; i < src.length; i++) if (src[i] === "\n") lineStarts.push(i + 1);
@@ -231,13 +257,29 @@ export function lintCodegenFile(filePath: string): CodegenFinding[] {
       findings.push({
         file: filePath,
         line,
-        text: (src.split(/\r?\n/)[line - 1] ?? "").trim(),
+        text: (lines[line - 1] ?? "").trim(),
         message:
           "raw `args` reference inside generated JSX — embed it with jsxVal(...) " +
           "(or a lookup preamble). Interpolating a tool argument straight into " +
           "ExtendScript is an injection vector. If this is a condition rather " +
           "than an embedded value, hoist it into a const above the template.",
       });
+    }
+
+    for (const rule of ERROR_TO_TEXT) {
+      rule.lastIndex = 0;
+      while ((m = rule.exec(body)) !== null) {
+        const line = lineOf(start + m.index);
+        findings.push({
+          file: filePath,
+          line,
+          text: (lines[line - 1] ?? "").trim(),
+          message:
+            `\`${m[0].trim()}\` renders a caught exception by coercion. ExtendScript ` +
+            "cannot coerce an Error to a primitive, so this throws inside the handler " +
+            "and the original failure is lost. Use AE.errText(...) instead.",
+        });
+      }
     }
   }
   return findings;

@@ -383,7 +383,7 @@ registerOp({
     const lines: string[] = [];
     for (const [k, v] of Object.entries(props)) {
       lines.push(
-        `try { _l[${jsxVal(k)}] = ${jsxVal(v)}; } catch (e) { _w.push(${jsxVal(k)} + ": " + e); }`,
+        `try { _l[${jsxVal(k)}] = ${jsxVal(v)}; } catch (e) { _w.push(${jsxVal(k)} + ": " + AE.errText(e)); }`,
       );
     }
     return `

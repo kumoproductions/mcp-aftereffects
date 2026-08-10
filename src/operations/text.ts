@@ -120,38 +120,40 @@ registerOp({
   toJsx(args) {
     const sets: string[] = [];
     if (args.font !== undefined)
-      sets.push(`try { _doc.font = ${jsxVal(args.font)}; } catch(e) { _w.push("font: "+e); }`);
+      sets.push(
+        `try { _doc.font = ${jsxVal(args.font)}; } catch(e) { _w.push("font: "+AE.errText(e)); }`,
+      );
     if (args.fontSize !== undefined)
       sets.push(
-        `try { _doc.fontSize = ${jsxVal(args.fontSize)}; } catch(e) { _w.push("fontSize: "+e); }`,
+        `try { _doc.fontSize = ${jsxVal(args.fontSize)}; } catch(e) { _w.push("fontSize: "+AE.errText(e)); }`,
       );
     if (args.fillColor !== undefined)
       sets.push(
-        `try { _doc.fillColor = ${jsxVal(args.fillColor)}; } catch(e) { _w.push("fillColor: "+e); }`,
+        `try { _doc.fillColor = ${jsxVal(args.fillColor)}; } catch(e) { _w.push("fillColor: "+AE.errText(e)); }`,
       );
     if (args.strokeColor !== undefined)
       sets.push(
-        `try { _doc.strokeColor = ${jsxVal(args.strokeColor)}; } catch(e) { _w.push("strokeColor: "+e); }`,
+        `try { _doc.strokeColor = ${jsxVal(args.strokeColor)}; } catch(e) { _w.push("strokeColor: "+AE.errText(e)); }`,
       );
     if (args.strokeWidth !== undefined)
       sets.push(
-        `try { _doc.strokeWidth = ${jsxVal(args.strokeWidth)}; } catch(e) { _w.push("strokeWidth: "+e); }`,
+        `try { _doc.strokeWidth = ${jsxVal(args.strokeWidth)}; } catch(e) { _w.push("strokeWidth: "+AE.errText(e)); }`,
       );
     if (args.tracking !== undefined)
       sets.push(
-        `try { _doc.tracking = ${jsxVal(args.tracking)}; } catch(e) { _w.push("tracking: "+e); }`,
+        `try { _doc.tracking = ${jsxVal(args.tracking)}; } catch(e) { _w.push("tracking: "+AE.errText(e)); }`,
       );
     if (args.leading !== undefined)
       sets.push(
-        `try { _doc.leading = ${jsxVal(args.leading)}; } catch(e) { _w.push("leading: "+e); }`,
+        `try { _doc.leading = ${jsxVal(args.leading)}; } catch(e) { _w.push("leading: "+AE.errText(e)); }`,
       );
     if (args.applyFill !== undefined)
       sets.push(
-        `try { _doc.applyFill = ${jsxVal(args.applyFill)}; } catch(e) { _w.push("applyFill: "+e); }`,
+        `try { _doc.applyFill = ${jsxVal(args.applyFill)}; } catch(e) { _w.push("applyFill: "+AE.errText(e)); }`,
       );
     if (args.applyStroke !== undefined)
       sets.push(
-        `try { _doc.applyStroke = ${jsxVal(args.applyStroke)}; } catch(e) { _w.push("applyStroke: "+e); }`,
+        `try { _doc.applyStroke = ${jsxVal(args.applyStroke)}; } catch(e) { _w.push("applyStroke: "+AE.errText(e)); }`,
       );
     if (args.justification !== undefined)
       sets.push(`
@@ -168,14 +170,14 @@ registerOp({
             var _just = _justMap[${jsxVal(args.justification)}];
             if (_just === undefined) { _w.push("justification: unknown value"); }
             else { _doc.justification = _just; }
-        } catch(e) { _w.push("justification: "+e); }`);
+        } catch(e) { _w.push("justification: "+AE.errText(e)); }`);
     if (args.baselineShift !== undefined)
       sets.push(
-        `try { _doc.baselineShift = ${jsxVal(args.baselineShift)}; } catch(e) { _w.push("baselineShift: "+e); }`,
+        `try { _doc.baselineShift = ${jsxVal(args.baselineShift)}; } catch(e) { _w.push("baselineShift: "+AE.errText(e)); }`,
       );
     if (args.autoLeading !== undefined)
       sets.push(
-        `try { _doc.autoLeading = ${jsxVal(args.autoLeading)}; } catch(e) { _w.push("autoLeading: "+e); }`,
+        `try { _doc.autoLeading = ${jsxVal(args.autoLeading)}; } catch(e) { _w.push("autoLeading: "+AE.errText(e)); }`,
       );
     // allCaps/smallCaps are read-only on TextDocument; the writable control is
     // fontCapsOption (FontCapsOption enum, AE 24.0+).
@@ -191,28 +193,28 @@ registerOp({
           ? "FONT_SMALL_CAPS"
           : "FONT_NORMAL_CAPS";
       sets.push(
-        `try { _doc.fontCapsOption = FontCapsOption.${caps}; } catch(e) { _w.push("allCaps/smallCaps (AE 24.0+): "+e); }`,
+        `try { _doc.fontCapsOption = FontCapsOption.${caps}; } catch(e) { _w.push("allCaps/smallCaps (AE 24.0+): "+AE.errText(e)); }`,
       );
     }
     if (args.fauxBold !== undefined)
       sets.push(
-        `try { _doc.fauxBold = ${jsxVal(args.fauxBold)}; } catch(e) { _w.push("fauxBold (AE 24.0+): "+e); }`,
+        `try { _doc.fauxBold = ${jsxVal(args.fauxBold)}; } catch(e) { _w.push("fauxBold (AE 24.0+): "+AE.errText(e)); }`,
       );
     if (args.fauxItalic !== undefined)
       sets.push(
-        `try { _doc.fauxItalic = ${jsxVal(args.fauxItalic)}; } catch(e) { _w.push("fauxItalic (AE 24.0+): "+e); }`,
+        `try { _doc.fauxItalic = ${jsxVal(args.fauxItalic)}; } catch(e) { _w.push("fauxItalic (AE 24.0+): "+AE.errText(e)); }`,
       );
     if (args.horizontalScale !== undefined)
       sets.push(
-        `try { _doc.horizontalScale = ${jsxVal(args.horizontalScale)}; } catch(e) { _w.push("horizontalScale (AE 24.0+): "+e); }`,
+        `try { _doc.horizontalScale = ${jsxVal(args.horizontalScale)}; } catch(e) { _w.push("horizontalScale (AE 24.0+): "+AE.errText(e)); }`,
       );
     if (args.verticalScale !== undefined)
       sets.push(
-        `try { _doc.verticalScale = ${jsxVal(args.verticalScale)}; } catch(e) { _w.push("verticalScale (AE 24.0+): "+e); }`,
+        `try { _doc.verticalScale = ${jsxVal(args.verticalScale)}; } catch(e) { _w.push("verticalScale (AE 24.0+): "+AE.errText(e)); }`,
       );
     if (args.tsume !== undefined)
       sets.push(
-        `try { _doc.tsume = ${jsxVal(args.tsume)}; } catch(e) { _w.push("tsume (AE 24.0+): "+e); }`,
+        `try { _doc.tsume = ${jsxVal(args.tsume)}; } catch(e) { _w.push("tsume (AE 24.0+): "+AE.errText(e)); }`,
       );
     return `
             ${jsxCompLayerPreamble(args)}
@@ -257,11 +259,11 @@ registerOp({
     const sets: string[] = [];
     if (args.boxSize !== undefined)
       sets.push(
-        `try { _doc.boxTextSize = ${jsxVal(args.boxSize)}; } catch (eBs) { _w.push("boxTextSize: " + eBs); }`,
+        `try { _doc.boxTextSize = ${jsxVal(args.boxSize)}; } catch (eBs) { _w.push("boxTextSize: " + AE.errText(eBs)); }`,
       );
     if (args.boxPosition !== undefined)
       sets.push(
-        `try { _doc.boxTextPos = ${jsxVal(args.boxPosition)}; } catch (eBp) { _w.push("boxTextPos (AE 14.0+): " + eBp); }`,
+        `try { _doc.boxTextPos = ${jsxVal(args.boxPosition)}; } catch (eBp) { _w.push("boxTextPos (AE 14.0+): " + AE.errText(eBp)); }`,
       );
     return `
             ${jsxCompLayerPreamble(args)}
@@ -329,15 +331,15 @@ registerOp({
     const rangeSets: string[] = [];
     if (args.rangeStart !== undefined)
       rangeSets.push(
-        `try { _sel.property("ADBE Text Percent Start").setValue(${jsxVal(args.rangeStart)}); } catch (eRs) { _w.push("rangeStart: " + eRs); }`,
+        `try { _sel.property("ADBE Text Percent Start").setValue(${jsxVal(args.rangeStart)}); } catch (eRs) { _w.push("rangeStart: " + AE.errText(eRs)); }`,
       );
     if (args.rangeEnd !== undefined)
       rangeSets.push(
-        `try { _sel.property("ADBE Text Percent End").setValue(${jsxVal(args.rangeEnd)}); } catch (eRe) { _w.push("rangeEnd: " + eRe); }`,
+        `try { _sel.property("ADBE Text Percent End").setValue(${jsxVal(args.rangeEnd)}); } catch (eRe) { _w.push("rangeEnd: " + AE.errText(eRe)); }`,
       );
     if (args.rangeOffset !== undefined)
       rangeSets.push(
-        `try { _sel.property("ADBE Text Percent Offset").setValue(${jsxVal(args.rangeOffset)}); } catch (eRo) { _w.push("rangeOffset: " + eRo); }`,
+        `try { _sel.property("ADBE Text Percent Offset").setValue(${jsxVal(args.rangeOffset)}); } catch (eRo) { _w.push("rangeOffset: " + AE.errText(eRo)); }`,
       );
     return `
             ${jsxCompLayerPreamble(args)}
@@ -356,7 +358,7 @@ registerOp({
                     var _ap = _animProps.addProperty(_k);
                     if (_props[_k] !== null) _ap.setValue(_props[_k]);
                     _added.push(_k);
-                } catch (eAp) { _w.push(_k + ": " + eAp); }
+                } catch (eAp) { _w.push(_k + ": " + AE.errText(eAp)); }
             }
             var _selType = ${jsxVal(args.selector ?? "range")};
             var _selName = null;
@@ -371,7 +373,7 @@ registerOp({
                     if (_selType === "range") {
                         ${rangeSets.join("\n")}
                     }
-                } catch (eSel) { _w.push("selector: " + eSel); }
+                } catch (eSel) { _w.push("selector: " + AE.errText(eSel)); }
             }
             return { ok: true, animator: _anim.name, animatorIndex: _anim.propertyIndex, addedProperties: _added, selector: _selName, warnings: _w };
         `;

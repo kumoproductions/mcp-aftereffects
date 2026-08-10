@@ -31,27 +31,27 @@ registerOp({
     const sets: string[] = [];
     if (args.threeDLayer !== undefined)
       sets.push(
-        `try { _l.threeDLayer = ${jsxVal(args.threeDLayer)}; } catch(e) { _w.push("3D: " + e); }`,
+        `try { _l.threeDLayer = ${jsxVal(args.threeDLayer)}; } catch(e) { _w.push("3D: " + AE.errText(e)); }`,
       );
     if (args.position !== undefined)
       sets.push(
-        `try { _xf.position.setValue(${jsxVal(args.position)}); } catch(e) { _w.push("position: " + e); }`,
+        `try { _xf.position.setValue(${jsxVal(args.position)}); } catch(e) { _w.push("position: " + AE.errText(e)); }`,
       );
     if (args.scale !== undefined)
       sets.push(
-        `try { _xf.scale.setValue(${jsxVal(args.scale)}); } catch(e) { _w.push("scale: " + e); }`,
+        `try { _xf.scale.setValue(${jsxVal(args.scale)}); } catch(e) { _w.push("scale: " + AE.errText(e)); }`,
       );
     if (args.rotation !== undefined)
       sets.push(
-        `try { _xf.rotation.setValue(${jsxVal(args.rotation)}); } catch(e) { _w.push("rotation: " + e); }`,
+        `try { _xf.rotation.setValue(${jsxVal(args.rotation)}); } catch(e) { _w.push("rotation: " + AE.errText(e)); }`,
       );
     if (args.opacity !== undefined)
       sets.push(
-        `try { _xf.opacity.setValue(${jsxVal(args.opacity)}); } catch(e) { _w.push("opacity: " + e); }`,
+        `try { _xf.opacity.setValue(${jsxVal(args.opacity)}); } catch(e) { _w.push("opacity: " + AE.errText(e)); }`,
       );
     if (args.anchorPoint !== undefined)
       sets.push(
-        `try { _xf.anchorPoint.setValue(${jsxVal(args.anchorPoint)}); } catch(e) { _w.push("anchorPoint: " + e); }`,
+        `try { _xf.anchorPoint.setValue(${jsxVal(args.anchorPoint)}); } catch(e) { _w.push("anchorPoint: " + AE.errText(e)); }`,
       );
     return `
             ${jsxCompPreamble(args)}

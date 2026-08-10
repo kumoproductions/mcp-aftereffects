@@ -73,7 +73,7 @@ registerOp({
                         styleName: AE.safeGet(function () { return _font.styleName; }, null)
                     });
                 }
-            } catch (eM) { return { ok: false, error: "missingOrSubstitutedFonts failed: " + eM }; }
+            } catch (eM) { return { ok: false, error: "missingOrSubstitutedFonts failed: " + AE.errText(eM) }; }
             return { ok: true, count: _missing.length, fonts: _missing };
         `;
   },

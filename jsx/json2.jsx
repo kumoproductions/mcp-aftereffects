@@ -20,8 +20,20 @@ if (typeof JSON === "undefined" || !JSON || typeof JSON.stringify !== "function"
             for (var i = 0; i < s.length; i++) {
                 var ch = s.charAt(i);
                 var code = s.charCodeAt(i);
-                if (escMap[ch]) {
-                    out += escMap[ch];
+                // `if (escMap[ch])` would be wrong here, and catastrophically so.
+                // ExtendScript hangs its operator-overload hooks off
+                // Object.prototype under one-character names, so on AE 26.3
+                // escMap["-"], ["+"], ["*"] and ["/"] each resolve to an
+                // inherited FUNCTION rather than undefined. The truthiness test
+                // passes, `out +=` gets an object it cannot coerce, and the
+                // whole stringify call dies with "Object of type Function found
+                // where a Number, Array, or Property is needed". Every response
+                // carries a hyphenated UUID id, so that was every response: no
+                // file written, and the caller timing out after 60s.
+                // Only a string is a real hit — check the type, not the truth.
+                var esc = escMap[ch];
+                if (typeof esc === "string") {
+                    out += esc;
                 } else if (code < 0x20 || code === 0x7f) {
                     var hex = code.toString(16);
                     while (hex.length < 4) hex = "0" + hex;

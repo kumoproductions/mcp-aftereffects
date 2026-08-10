@@ -66,26 +66,28 @@ registerOp({
   toJsx(args) {
     const sets: string[] = [];
     if (args.zoom !== undefined)
-      sets.push(`try { _opts.zoom = ${jsxVal(args.zoom)}; } catch (e) { _w.push("zoom: " + e); }`);
+      sets.push(
+        `try { _opts.zoom = ${jsxVal(args.zoom)}; } catch (e) { _w.push("zoom: " + AE.errText(e)); }`,
+      );
     if (args.exposure !== undefined)
       sets.push(
-        `try { _opts.exposure = ${jsxVal(args.exposure)}; } catch (e) { _w.push("exposure: " + e); }`,
+        `try { _opts.exposure = ${jsxVal(args.exposure)}; } catch (e) { _w.push("exposure: " + AE.errText(e)); }`,
       );
     if (args.checkerboards !== undefined)
       sets.push(
-        `try { _opts.checkerboards = ${jsxVal(args.checkerboards)}; } catch (e) { _w.push("checkerboards: " + e); }`,
+        `try { _opts.checkerboards = ${jsxVal(args.checkerboards)}; } catch (e) { _w.push("checkerboards: " + AE.errText(e)); }`,
       );
     if (args.guidesVisibility !== undefined)
       sets.push(
-        `try { _opts.guidesVisibility = ${jsxVal(args.guidesVisibility)}; } catch (e) { _w.push("guidesVisibility (AE 16.1+): " + e); }`,
+        `try { _opts.guidesVisibility = ${jsxVal(args.guidesVisibility)}; } catch (e) { _w.push("guidesVisibility (AE 16.1+): " + AE.errText(e)); }`,
       );
     if (args.rulers !== undefined)
       sets.push(
-        `try { _opts.rulers = ${jsxVal(args.rulers)}; } catch (e) { _w.push("rulers (AE 16.1+): " + e); }`,
+        `try { _opts.rulers = ${jsxVal(args.rulers)}; } catch (e) { _w.push("rulers (AE 16.1+): " + AE.errText(e)); }`,
       );
     if (args.maximized !== undefined)
       sets.push(
-        `try { _v.maximized = ${jsxVal(args.maximized)}; } catch (e) { _w.push("maximized: " + e); }`,
+        `try { _v.maximized = ${jsxVal(args.maximized)}; } catch (e) { _w.push("maximized: " + AE.errText(e)); }`,
       );
     return `
             var _v = app.activeViewer;

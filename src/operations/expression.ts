@@ -116,7 +116,7 @@ registerOp({
                     node.expressionEnabled = true;
                     _restored++;
                 } catch(e) {
-                    _errors.push("layer " + entry.layer + " " + entry.path + ": " + e);
+                    _errors.push("layer " + entry.layer + " " + entry.path + ": " + AE.errText(e));
                 }
             }
             return { ok: true, restored: _restored, errors: _errors };

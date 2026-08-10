@@ -135,5 +135,5 @@ export const AMBIENT_CONTEXT_JSX = `
             _ctx.activeComp = null;
             _ctx.selectedLayers = [];
         }
-    } catch (eCtx) { _ctx.error = String(eCtx); }
+    } catch (eCtx) { _ctx.error = AE.errText(eCtx); }
 `;

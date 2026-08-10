@@ -84,18 +84,20 @@ registerOp({
   toJsx(args) {
     const sets: string[] = [];
     if (args.name !== undefined)
-      sets.push(`try { _item.name = ${jsxVal(args.name)}; } catch (e) { _w.push("name: " + e); }`);
+      sets.push(
+        `try { _item.name = ${jsxVal(args.name)}; } catch (e) { _w.push("name: " + AE.errText(e)); }`,
+      );
     if (args.label !== undefined)
       sets.push(
-        `try { _item.label = ${jsxVal(args.label)}; } catch (e) { _w.push("label: " + e); }`,
+        `try { _item.label = ${jsxVal(args.label)}; } catch (e) { _w.push("label: " + AE.errText(e)); }`,
       );
     if (args.comment !== undefined)
       sets.push(
-        `try { _item.comment = ${jsxVal(args.comment)}; } catch (e) { _w.push("comment: " + e); }`,
+        `try { _item.comment = ${jsxVal(args.comment)}; } catch (e) { _w.push("comment: " + AE.errText(e)); }`,
       );
     if (args.selected !== undefined)
       sets.push(
-        `try { _item.selected = ${jsxVal(args.selected)}; } catch (e) { _w.push("selected: " + e); }`,
+        `try { _item.selected = ${jsxVal(args.selected)}; } catch (e) { _w.push("selected: " + AE.errText(e)); }`,
       );
     return `
             var _item = AE.findItem(${jsxVal(args.item)});

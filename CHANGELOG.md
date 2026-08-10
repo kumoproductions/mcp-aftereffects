@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Every tool call failed on After Effects builds without a native `JSON`** (reported on 26.3x87 / macOS). ExtendScript hangs its operator-overload hooks off `Object.prototype` under one-character names, so inside AE `escMap["-"]` resolves to an inherited **Function** rather than `undefined`. The polyfill's `if (escMap[ch])` membership test therefore passed for `-`, `+`, `*` and `/`, and `out += <Function>` threw "Object of type Function found where a Number, Array, or Property is needed". Every request id is a hyphenated UUID, so every response was unserializable: no response file was ever written and every call timed out after 60s. `jsx/json2.jsx` now tests `typeof escMap[ch] === "string"`. Ordinary project data — a comp named `shot-01` — was enough to trigger it on its own. Where AE does supply a native `JSON` (Windows 26.3 does) the polyfill never installed and the bug never fired, which is why this was invisible on Windows.
+
+- **A failing dispatcher took After Effects down with it.** `"FATAL: writeResponse threw: " + e` is not the harmless shorthand it looks like: ExtendScript cannot coerce an `Error` to a primitive, so the concatenation itself throws — from inside the handler whose only job was to report the original failure. The real error was never logged (`dispatcher.log` was never even created), the replacement escaped the dispatcher, and AE raised a modal error dialog. A modal blocks every subsequent `-r` launch, so from that point on every call failed as a confusing "another call holds the dispatcher busy lock" timeout until a human clicked OK. Exceptions now go through `AE.errText` (`jsx/helpers.jsx`) and the dispatcher's own copy of it, and the dispatcher body is wrapped in a top-level guard so nothing can reach AE's modal.
+
+- **The same coercion bug in 94 other places.** Every `catch (e) { _w.push("prop: " + e); }` in the generated ExtendScript and in `jsx/import.jsx` had it. Unlike the dispatcher case these were contained by the execute handler, but each turned a recoverable warning into a failed call — and this class fires on **every** platform, native `JSON` or not. All of them now use `AE.errText`.
+
+- **A response that cannot be serialized no longer costs 60 seconds.** `writeResponse` falls back to a hand-built minimal error response, so the caller learns what happened instead of waiting out its timeout.
+
+### Changed
+
+- `npm run check` now fails on both shapes of rendering a caught exception by coercion (`"..." + e`, `String(e)`) anywhere in `jsx/` or in generated JSX under `src/`. The rule keys off catch-parameter naming, so an ordinary identifier is not mistaken for an exception. It found the 14 sites in `jsx/import.jsx` that a hand grep had missed.
+
 ## [0.1.0] - 2026-08-09
 
 Initial public release of `@kumoproductions/mcp-aftereffects`.

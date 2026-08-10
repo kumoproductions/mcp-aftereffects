@@ -224,6 +224,25 @@ const rules: LintRule[] = [
     regex: /\bvar\s+export\b/,
     severity: "error",
   },
+  // ExtendScript runtime hazards that look like ordinary JavaScript
+  {
+    // `"failed: " + e` is not shorthand, it is a second bug on top of the
+    // first: ExtendScript cannot coerce an Error to a primitive, so the
+    // concatenation throws ("Object of type Error found where a Number, Array,
+    // or Property is needed") from inside the handler that was reporting the
+    // original failure. The real error is lost and the replacement escapes —
+    // in the dispatcher, as far as AE's modal error dialog, which then blocks
+    // scripting for the rest of the session.
+    //
+    // Matches only the catch-parameter names this codebase uses (`e`, `eRm`,
+    // `eCtx`, `err`), so an ordinary variable is never mistaken for one. It
+    // does not — cannot — see a value laundered through a local first.
+    id: "es-error-concat",
+    description:
+      "Concatenating a caught exception throws in ExtendScript. Use AE.errText(e) (dispatcher.jsx has its own describeError).",
+    regex: /\+\s*(?:e|e[A-Z][\w$]*|err)(?![\w$(.])/,
+    severity: "error",
+  },
   // AE-specific bugs
   {
     id: "ae-no-items-addsolid",

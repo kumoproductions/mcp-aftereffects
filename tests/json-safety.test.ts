@@ -32,6 +32,74 @@ function loadPolyfill(): { parse: (t: string) => unknown; stringify: (v: unknown
   return load(undefined);
 }
 
+/**
+ * Characters ExtendScript reserves for operator overloading. It hangs default
+ * implementations off Object.prototype under exactly these names, so inside AE
+ * `({})["-"]` is a **Function**, not undefined — while in Node it is undefined
+ * and the hazard is invisible. Recreating the pollution is the only way this
+ * suite can see the bug that made every single tool call fail on AE 26.3.
+ *
+ * Non-enumerable on purpose: `for (k in obj)` must behave as it does in AE,
+ * and vitest's own object walking must not trip over them either.
+ */
+const ES_OPERATOR_KEYS = ["+", "-", "*", "/", "<", "<=", "==", "==="];
+
+function withExtendScriptOperators<T>(fn: () => T): T {
+  for (const key of ES_OPERATOR_KEYS) {
+    Object.defineProperty(Object.prototype, key, {
+      value: function operatorOverload() {},
+      configurable: true,
+      enumerable: false,
+      writable: true,
+    });
+  }
+  try {
+    return fn();
+  } finally {
+    for (const key of ES_OPERATOR_KEYS) {
+      delete (Object.prototype as Record<string, unknown>)[key];
+    }
+  }
+}
+
+describe("json2.jsx stringify under ExtendScript's operator overloads", () => {
+  it("serializes ordinary values", () => {
+    const json = loadPolyfill();
+    expect(json.stringify({ a: 1, b: [true, null, "x"], c: { d: 'q"uote\n' } })).toBe(
+      '{"a":1,"b":[true,null,"x"],"c":{"d":"q\\"uote\\n"}}',
+    );
+  });
+
+  it("serializes a hyphenated request id", () => {
+    // The regression that took the package to a 100% failure rate on AE 26.3:
+    // `escMap["-"]` resolved to an inherited Function, the truthiness guard
+    // passed, and `out +=` died on it. Every id is a UUID, so every response
+    // was unserializable — nothing was ever written and every call timed out.
+    withExtendScriptOperators(() => {
+      const json = loadPolyfill();
+      const id = "b81b9e1d-6daa-4c39-9e2f-8a1d0c7f4b22";
+      expect(json.stringify({ id, ok: true })).toBe(`{"id":"${id}","ok":true}`);
+    });
+  });
+
+  it("serializes every overloaded character, in values and in keys", () => {
+    withExtendScriptOperators(() => {
+      const json = loadPolyfill();
+      // Ordinary project data: a comp named like this used to be enough.
+      const doc = { "shot-01/comp+bg": "take-2 * 1.5 / final <= v3 == approved" };
+      expect(JSON.parse(json.stringify(doc))).toEqual(doc);
+    });
+  });
+
+  it("still escapes what it is supposed to escape", () => {
+    withExtendScriptOperators(() => {
+      const json = loadPolyfill();
+      const control = String.fromCharCode(1);
+      expect(json.stringify(`tab\there\\and${control}`)).toBe('"tab\\there\\\\and\\u0001"');
+    });
+  });
+});
+
 describe("json2.jsx parse guard", () => {
   const json = loadPolyfill();
 

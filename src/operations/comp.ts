@@ -69,7 +69,7 @@ registerOp({
     const lines: string[] = [];
     for (const [k, v] of Object.entries(props)) {
       lines.push(
-        `try { _comp[${jsxVal(k)}] = ${jsxVal(v)}; } catch (e) { _w.push(${jsxVal(k)} + ": " + e); }`,
+        `try { _comp[${jsxVal(k)}] = ${jsxVal(v)}; } catch (e) { _w.push(${jsxVal(k)} + ": " + AE.errText(e)); }`,
       );
     }
     return `
@@ -203,7 +203,7 @@ registerOp({
                         position: _g.position
                     });
                 }
-            } catch (eG) { return { ok: false, error: "guides need AE 16.1+: " + eG }; }
+            } catch (eG) { return { ok: false, error: "guides need AE 16.1+: " + AE.errText(eG) }; }
             return { ok: true, count: _guides.length, guides: _guides };
         `;
   },

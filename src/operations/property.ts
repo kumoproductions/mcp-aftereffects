@@ -46,7 +46,7 @@ registerOp({
                     _node.setValue(${jsxVal(args.value)});
                     _results.push({ name: _layer.name, ok: true });
                 } catch(e) {
-                    _results.push({ name: _layer.name, ok: false, error: String(e).substring(0, 50) });
+                    _results.push({ name: _layer.name, ok: false, error: AE.errText(e).substring(0, 50) });
                 }
             }
             return { ok: true, count: _results.length, layers: _results };
@@ -222,7 +222,7 @@ registerOp({
             ${jsxPropertyLookup()}
             var _removedName = _node.name;
             try { _node.remove(); } catch (eRm) {
-                return { ok: false, error: "cannot remove '" + _removedName + "': " + eRm };
+                return { ok: false, error: "cannot remove '" + _removedName + "': " + AE.errText(eRm) };
             }
             return { ok: true, removed: _removedName };
         `;
