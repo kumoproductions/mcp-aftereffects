@@ -251,13 +251,41 @@ registerOp({
       description: "1-based current layer index, or the layer name",
       required: true,
     },
-    { name: "toIndex", type: "number", description: "1-based target index", required: true },
+    {
+      name: "toIndex",
+      type: "number",
+      description: "1-based target index, within 1..numLayers",
+      required: true,
+    },
   ],
   toJsx(args) {
     return `
             ${jsxCompLayerPreamble(args)}
-            _layer.moveTo(${jsxVal(args.toIndex)});
-            return { ok: true, newIndex: _layer.index, name: _layer.name };
+            var _to = ${jsxVal(args.toIndex)};
+            if (typeof _to !== "number" || isNaN(_to) || _to !== Math.floor(_to)) {
+                return { ok: false, error: "toIndex must be a whole number, got " + _to };
+            }
+            if (_to < 1 || _to > _comp.numLayers) {
+                return { ok: false, error: "toIndex " + _to + " is out of range (comp has " + _comp.numLayers + " layers)" };
+            }
+            var _from = _layer.index;
+            // NOT _layer.moveTo(_to). Layer inherits moveTo from PropertyBase,
+            // so it exists and type-checks — and then throws for every layer,
+            // every time: "Can not moveTo this property, because parent is not
+            // an INDEXED_GROUP". A layer's parent is the composition, not a
+            // property group, so the inherited method never applies. Reordering
+            // layers is only expressible relative to a sibling.
+            if (_to < _from) {
+                // Upward: land directly above whoever holds _to right now.
+                _layer.moveBefore(_comp.layer(_to));
+            } else if (_to > _from) {
+                // Downward: everything between _from and _to shifts up by one
+                // as soon as _layer vacates its slot, so the layer currently at
+                // _to ends up at _to - 1 — landing AFTER it is what puts
+                // _layer at _to.
+                _layer.moveAfter(_comp.layer(_to));
+            }
+            return { ok: true, fromIndex: _from, newIndex: _layer.index, name: _layer.name };
         `;
   },
 });
