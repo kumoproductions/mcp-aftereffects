@@ -6,12 +6,12 @@
     "url": "https://github.com/kumoproductions/mcp-aftereffects",
     "source": "github"
   },
-  "version": "0.1.1",
+  "version": "0.1.2",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@kumoproductions/mcp-aftereffects",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "transport": {
         "type": "stdio"
       }
