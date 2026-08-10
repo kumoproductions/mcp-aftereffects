@@ -304,9 +304,12 @@ Every file under `fixtures/` is validated against the schema as part of the offl
 
 ## Release flow (maintainers)
 
-1. `npm version <patch|minor|major>` — the `version` script runs `scripts/sync-server-version.mjs`, which syncs `server.json` to the new version and stages it into the version commit.
-2. Push the commit and the `v*` tag.
-3. The `release.yml` workflow re-runs the full check + test gate, then publishes to npm (Trusted Publishing via OIDC), the MCP Registry (`mcp-publisher`), and mirrors to GitHub Packages, plus creates the GitHub Release. Every publish step is idempotent — re-running a partially failed release is safe.
+1. Land the release notes under a `## [Unreleased]` heading in `CHANGELOG.md` (Keep a Changelog subsections: Added / Changed / Fixed / Security).
+2. `npm version <patch|minor|major>` — two scripts run around the bump and stage their output into the version commit:
+   - `scripts/release-changelog.mjs` rewrites `## [Unreleased]` to `## [<version>] - <today>` and adds the `[<version>]: …/releases/tag/v<version>` link. It runs first as `preversion --check`, so a missing or empty `[Unreleased]` section aborts the release before anything is bumped.
+   - `scripts/sync-server-version.mjs` syncs `server.json` to the new version.
+3. Push the commit and the `v*` tag.
+4. The `release.yml` workflow re-runs the full check + test gate, then publishes to npm (Trusted Publishing via OIDC), the MCP Registry (`mcp-publisher`), and mirrors to GitHub Packages, plus creates the GitHub Release. Every publish step is idempotent — re-running a partially failed release is safe.
 
 The workflow refuses to publish if the tag, `package.json`, and `server.json` versions disagree, so never edit versions by hand.
 

@@ -62,7 +62,8 @@
     "check": "npm run typecheck && npm run typecheck:test && npm run lint && npm run format:check && npm run lint:jsx && npm run check:server-json && npm run docs:tools:check",
     "prepare": "lefthook install",
     "prepublishOnly": "npm run build",
-    "version": "node scripts/sync-server-version.mjs && git add server.json"
+    "preversion": "node scripts/release-changelog.mjs --check",
+    "version": "node scripts/release-changelog.mjs && node scripts/sync-server-version.mjs && git add CHANGELOG.md server.json"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
