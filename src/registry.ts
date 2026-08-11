@@ -35,6 +35,16 @@ export interface Operation {
    * out of it.
    */
   readOnly?: boolean;
+  /**
+   * Whether this call may run inside the dispatcher's automatic undo group.
+   * Omitted means yes, which is right for everything that MUTATES the project.
+   * Return false for anything that drives the undo stack itself — Undo and Redo
+   * are the whole list. AE resolves them against the group that is still open,
+   * so `app.executeCommand(16)` between beginUndoGroup and endUndoGroup reverts
+   * nothing the caller asked for and leaves the stack describing a step that
+   * never happened. Those requests run bare instead (see EvalRequest.undoGroup).
+   */
+  undoGroup?(args: Record<string, unknown>): boolean;
   /** Generate the JSX code body (function body, ends with `return ...;`). */
   toJsx(args: Record<string, unknown>): string;
 }
@@ -53,6 +63,11 @@ export function listOps(category?: string): Operation[] {
   const all = Array.from(operations.values());
   if (!category) return all;
   return all.filter((op) => op.category === category);
+}
+
+/** True when `op` may run inside the dispatcher's automatic undo group. */
+export function wantsUndoGroup(op: Operation, args: Record<string, unknown>): boolean {
+  return op.undoGroup ? op.undoGroup(args) : true;
 }
 
 export function listCategories(): string[] {

@@ -60,10 +60,10 @@ Pre-commit hooks (via [lefthook](https://lefthook.dev/)) automatically run `oxli
 There is no long-lived bridge process. Each JSX execution is one round-trip:
 
 1. Node validates the call against the operation's declared parameters (`src/opschema.ts`) — nothing reaches AE until the arguments type-check.
-2. Node writes `<mailbox>/request-<id>.json`: `{ id, label, code, payload }`. The mailbox is `%TEMP%\mcp-aftereffects\runtime\` unless `AE_MCP_RUNTIME_DIR` says otherwise.
+2. Node writes `<mailbox>/request-<id>.json`: `{ id, label, code, payload, undoGroup }`. The mailbox is `%TEMP%\mcp-aftereffects\runtime\` unless `AE_MCP_RUNTIME_DIR` says otherwise.
 3. Node launches the dispatcher (`src/transport/launcher.ts`). Windows: `AfterFX.exe -r jsx/dispatcher.jsx`. macOS: `osascript` sends a `DoScript` bootstrap that pins the mailbox path into `$.global.AE_MCP_RUNTIME_DIR_OVERRIDE` and `$.evalFile`s the dispatcher — injecting the path means Node's `os.tmpdir()` and ExtendScript's `Folder.temp` never have to agree on macOS.
 4. The dispatcher locates the mailbox, picks the **oldest pending** `request-*.json`, and **deletes it immediately (consume-on-read)** — this is what prevents a timed-out, still-queued dispatcher run from picking up another request and executing it twice. A run that finds nothing pending logs and exits without writing a response.
-5. The dispatcher evals `code` inside an undo group with `payload` in scope, JSON-serializes the result, and writes `<mailbox>/response-<id>.json` atomically (tmp file + rename).
+5. The dispatcher evals `code` with `payload` in scope — inside an undo group unless the request set `undoGroup: false` — JSON-serializes the result, and writes `<mailbox>/response-<id>.json` atomically (tmp file + rename).
 6. Node polls for **its own** `response-<id>.json`, then deletes it.
 
 Response shape: `{ id, ok, phase, result, error, stack, logs }`. `phase` distinguishes a dispatcher failure (before our code ran) from a script failure, which the transport maps to the `DISPATCHER` and `JSX_THROW` error codes respectively.
@@ -258,6 +258,8 @@ Static tools should stay rare — most new capability belongs in the operation r
 2. If you created a new file, import it in `src/operations/index.ts` (side-effect import — that's what triggers registration).
 
 No docs regen needed: operations are advertised at runtime by `ae_catalog` and never appear in `docs/TOOLS.md`. They automatically get `ae_do`'s arg validation, `dryRun`, undo grouping, and batch support.
+
+**Undo grouping is automatic — do not open a group yourself,** either in `toJsx` output or in `eval.run` code; an unbalanced group leaks past the call and corrupts undo for the whole session. The one exception is an operation that _drives_ the undo stack (undo, redo): After Effects resolves those against the group that is still open, so wrapped in one they revert nothing the caller asked for. Such an operation declares `undoGroup: () => false` (see `project.undo`), which travels to the dispatcher as `undoGroup: false` and makes the call run bare. `batch.run` rejects those children — a batch is itself one undo group.
 
 ## Testing tiers
 

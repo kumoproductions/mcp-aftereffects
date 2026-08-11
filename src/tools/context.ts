@@ -46,6 +46,7 @@ const CODE = `
             "every ae_do / eval.run call is auto-wrapped in ONE undo group",
             "one Ctrl+Z (or project.undo) reverts the entire call; batch.run = one call = one undo step",
             "NEVER call app.beginUndoGroup/endUndoGroup in eval.run code — an unbalanced group corrupts undo for the session",
+            "undo/redo itself runs OUTSIDE the group: use project.undo (or command.execute 16/2035) as its own call — never inside batch.run, and never via eval.run",
             "ae_save_project and files written to disk (rendered PNGs, exported JSON) are NOT undoable"
         ]
     };

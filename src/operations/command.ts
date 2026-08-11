@@ -3,12 +3,26 @@
 
 import { registerOp, jsxVal } from "../registry.js";
 
+/** Menu command IDs for Undo and Redo — the two that drive the undo stack. */
+export const UNDO_COMMAND_ID = 16;
+export const REDO_COMMAND_ID = 2035;
+
+/** True when this menu command is Undo or Redo (see Operation.undoGroup). */
+export function isUndoRedoCommandId(id: unknown): boolean {
+  return id === UNDO_COMMAND_ID || id === REDO_COMMAND_ID;
+}
+
 registerOp({
   name: "command.execute",
   category: "command",
   description:
-    "Execute an AE menu command by its numeric ID. Use command.list to discover common IDs.",
+    "Execute an AE menu command by its numeric ID. Use command.list to discover common IDs. " +
+    "Undo (16) and Redo (2035) run outside this call's undo group, so they revert/replay the PREVIOUS call.",
   params: [{ name: "id", type: "number", description: "Menu command ID", required: true }],
+  // Undo/Redo must not be executed inside an open undo group — AE applies them
+  // to that group and the requested step survives. Everything else groups
+  // normally, so one Ctrl+Z still reverts one call.
+  undoGroup: (args) => !isUndoRedoCommandId(args.id),
   toJsx(args) {
     return `
             app.executeCommand(${jsxVal(args.id)});

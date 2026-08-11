@@ -50,7 +50,7 @@ export const catalogTool = defineTool({
         categories: summary,
         totalOperations: visibleOps().length,
         policy: policySummary(),
-        undo: "every ae_do call runs in ONE automatic undo group — a single Ctrl+Z / project.undo reverts the whole call (batch.run included); never open an undo group yourself",
+        undo: "every ae_do call runs in ONE automatic undo group — a single Ctrl+Z / project.undo reverts the whole call (batch.run included); never open an undo group yourself. undo/redo itself (project.undo, command.execute 16/2035) is the exception: it runs outside the group, so call it alone, never inside batch.run",
         ...(readOnlyMode()
           ? {
               note: "AE_MCP_READONLY=1 — only operations that cannot modify the project are listed.",

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { errorResult } from "../errors.js";
 import { summarizeParams, suggestName, validateOpArgs } from "../opschema.js";
 import { denyOperation, denyUnregisteredOperation } from "../policy.js";
-import { AMBIENT_CONTEXT_JSX, getOp, listOps } from "../registry.js";
+import { AMBIENT_CONTEXT_JSX, getOp, listOps, wantsUndoGroup } from "../registry.js";
 import { defineTool, jsonResult, jsxReportedFailure } from "./define-tool.js";
 
 export const doTool = defineTool({
@@ -16,7 +16,8 @@ export const doTool = defineTool({
     "read/verify steps (comp.info, layer.info, render.frame) can ride in the same batch. " +
     "Every call is automatically wrapped in ONE undo group: a single Ctrl+Z (or project.undo) reverts " +
     "the entire call, and a batch.run counts as one call. Never call app.beginUndoGroup/endUndoGroup " +
-    "in eval.run code — the wrapper already did. " +
+    "in eval.run code — the wrapper already did. The exception is undo/redo itself (project.undo, " +
+    "command.execute id 16/2035): those run outside the group and cannot ride inside a batch.run. " +
     "Response includes ambient context (active comp, selected layers, project state) at zero extra round trips. " +
     "Example: ae_do({ operation: 'keyframe.add', args: { comp: 'Main', layer: 1, " +
     "property: ['Transform','Position'], time: 2, value: [960,540] } })",
@@ -113,6 +114,10 @@ export const doTool = defineTool({
     const result = await transport.execute({
       code: wrappedCode,
       label: op.name,
+      // Undo/Redo opt out (Operation.undoGroup): they must reach AE with no
+      // group open, or they resolve against this call's own group instead of
+      // the previous call the caller means to revert.
+      undoGroup: wantsUndoGroup(op, validated.value),
       timeoutMs: doArgs.timeoutMs ?? 60_000,
     });
 

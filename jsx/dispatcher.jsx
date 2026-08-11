@@ -1,11 +1,13 @@
 // mcp-aftereffects dispatcher — invoked by `AfterFX.exe -r dispatcher.jsx`.
 //
 // Contract with the Node side:
-//   1. Node writes <runtime>/request-<id>.json: { id, label, code, payload }
+//   1. Node writes <runtime>/request-<id>.json:
+//      { id, label, code, payload, undoGroup }
 //   2. Node spawns `AfterFX.exe -r dispatcher.jsx`
 //   3. We locate the mailbox, pick the OLDEST pending request-*.json, DELETE it
-//      (consume-on-read), eval `code` inside an undo group with `payload` in
-//      scope, and write <runtime>/response-<id>.json atomically.
+//      (consume-on-read), eval `code` with `payload` in scope — inside an undo
+//      group unless the request set `undoGroup: false` — and write
+//      <runtime>/response-<id>.json atomically.
 //   4. Node polls for response-<id>.json — only ever its own.
 //
 // Per-id files, not a single request.json/response.json pair: two MCP clients
@@ -355,13 +357,21 @@
             return;
         }
 
-        // --- Execute user code inside an undo group ------------------------
+        // --- Execute user code, normally inside an undo group --------------
+        // `undoGroup: false` marks a request that DRIVES the undo stack (Undo,
+        // Redo). AE resolves those against the group that is still open, so
+        // wrapping them reverts nothing the caller asked for and leaves the
+        // stack describing a step that never happened — such a request runs
+        // bare. A missing field means the old contract: group it.
         var undoLabel = "mcp-aftereffects: " + (request.label || "action");
+        var wantUndoGroup = (request.undoGroup !== false);
         var undoOpen = false;
         response.phase = "execute";
         try {
-            app.beginUndoGroup(undoLabel);
-            undoOpen = true;
+            if (wantUndoGroup) {
+                app.beginUndoGroup(undoLabel);
+                undoOpen = true;
+            }
 
             // User code is a function body. Convention: `return <JSON-serializable>;`
             // `log(msg)` pushes breadcrumbs into response.logs; `payload` carries

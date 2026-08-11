@@ -1,6 +1,7 @@
 // Project-level operations — clear, delete item, find layers, list effects.
 
 import { registerOp, jsxVal, jsxCompPreamble } from "../registry.js";
+import { UNDO_COMMAND_ID } from "./command.js";
 
 registerOp({
   name: "project.open",
@@ -94,11 +95,16 @@ registerOp({
       default: 1,
     },
   ],
+  // Runs OUTSIDE the dispatcher's automatic undo group. Wrapped in one, AE
+  // resolves each Undo against the group that is still open: the previous
+  // call — the one the caller wants back — is never reverted, and the group
+  // this call closes afterwards leaves the stack out of step with the project.
+  undoGroup: () => false,
   toJsx(args) {
-    // Menu command IDs (see command.list / hyperbrew command-ID table): 16 = Undo, 2035 = Redo.
+    // Menu command ID (see command.list / hyperbrew command-ID table): 16 = Undo.
     return `
             var n = ${jsxVal(args.count ?? 1)};
-            for (var i = 0; i < n; i++) app.executeCommand(16);
+            for (var i = 0; i < n; i++) app.executeCommand(${UNDO_COMMAND_ID});
             return { ok: true, undone: n };
         `;
   },

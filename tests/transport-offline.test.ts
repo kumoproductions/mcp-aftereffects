@@ -45,6 +45,29 @@ async function mailboxEntries(prefix: string): Promise<string[]> {
   }
 }
 
+/**
+ * Read back the request an in-flight call put in the mailbox, matched by label.
+ * The mailbox is machine-wide and the request is written before anything can
+ * consume it, so this observes the real wire format without an AE on the other
+ * end — and without racing: the file stays until the call times out.
+ */
+async function readOwnRequest(label: string): Promise<Record<string, unknown> | null> {
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    for (const name of await mailboxEntries(REQUEST_PREFIX)) {
+      try {
+        const raw = await fs.readFile(path.join(RUNTIME_DIR, name), "utf8");
+        const parsed = JSON.parse(raw) as Record<string, unknown>;
+        if (parsed.label === label) return parsed;
+      } catch {
+        /* torn read, or another client's mail — keep looking */
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return null;
+}
+
 describe("mailbox location", () => {
   it("defaults to a machine-wide directory under the OS temp dir, not the package", () => {
     // The package directory is routinely read-only (global npm install, npx
@@ -206,6 +229,42 @@ describe("busy lock", () => {
     expect(res.errorCode).toBe("TIMEOUT");
     expect(res.error).toMatch(/after 2 launch attempts/);
   }, 15_000);
+});
+
+describe("undo group flag", () => {
+  beforeEach(() => {
+    process.env.AE_MCP_EXE = INERT_EXE;
+  });
+
+  it("travels to the dispatcher as an explicit field", async () => {
+    // undo/redo must reach AE with no group open (see tests/undo-group.test.ts).
+    // The flag is only worth anything if it survives serialization.
+    const transport = new FileIpcTransport();
+    const call = transport.execute({
+      code: "return 1;",
+      label: "offline_undo_off",
+      undoGroup: false,
+      timeoutMs: 600,
+    });
+    const request = await readOwnRequest("offline_undo_off");
+    await call;
+    expect(request).not.toBeNull();
+    expect(request?.undoGroup).toBe(false);
+  });
+
+  it("is sent as true when the caller says nothing", async () => {
+    // Explicit rather than omitted: "group this" must not ride on a key that
+    // survives the trip.
+    const transport = new FileIpcTransport();
+    const call = transport.execute({
+      code: "return 1;",
+      label: "offline_undo_default",
+      timeoutMs: 600,
+    });
+    const request = await readOwnRequest("offline_undo_default");
+    await call;
+    expect(request?.undoGroup).toBe(true);
+  });
 });
 
 describe("spawn failure", () => {

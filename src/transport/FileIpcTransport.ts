@@ -156,6 +156,10 @@ export class FileIpcTransport implements AeTransport {
       label: req.label ?? "action",
       code: req.code,
       payload: req.payload ?? null,
+      // Sent explicitly rather than by omission: the dispatcher defaults a
+      // missing field to true, and "group this" must not depend on a key
+      // surviving the trip.
+      undoGroup: req.undoGroup !== false,
     };
 
     // 1. Write the request atomically (tmp + rename). The tmp name is dotted so

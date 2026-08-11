@@ -276,4 +276,38 @@ describe("e2e operations", () => {
       expect(cleared.proxy).toBeNull();
     });
   });
+
+  describe("undo", () => {
+    it("reverts the previous call, whole", async (ctx) => {
+      if (!ready) return ctx.skip();
+
+      // Only AE can answer this one. project.undo runs OUTSIDE the dispatcher's
+      // undo group: wrapped in one, AE resolves each Undo against that still-open
+      // group and the call being undone survives — which is exactly what this
+      // asserts does not happen.
+      const before = await o().run<{ layers: unknown[] }>("comp.info", { comp: "test_comp" });
+
+      await o().run("batch.run", {
+        ops: [
+          { operation: "layer.create_null", args: { comp: "test_comp", name: "e2e_undo_a" } },
+          { operation: "layer.create_null", args: { comp: "test_comp", name: "e2e_undo_b" } },
+        ],
+      });
+      const added = await o().run<{ layers: Array<{ name: string }> }>("comp.info", {
+        comp: "test_comp",
+      });
+      expect(added.layers).toHaveLength(before.layers.length + 2);
+
+      const undone = await o().run<{ ok: boolean; undone: number }>("project.undo", { count: 1 });
+      expect(undone.undone).toBe(1);
+
+      // One batch = one undo step: both layers are gone, and nothing older is.
+      const after = await o().run<{ layers: Array<{ name: string }> }>("comp.info", {
+        comp: "test_comp",
+      });
+      expect(after.layers).toHaveLength(before.layers.length);
+      expect(after.layers.map((l) => l.name)).not.toContain("e2e_undo_a");
+      expect(after.layers.map((l) => l.name)).not.toContain("e2e_undo_b");
+    });
+  });
 });

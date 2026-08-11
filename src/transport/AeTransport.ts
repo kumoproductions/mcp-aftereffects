@@ -21,6 +21,13 @@ export interface EvalRequest {
   payload?: unknown;
   /** Undo group label shown in AE's Edit menu. */
   label?: string;
+  /**
+   * Wrap the call in an undo group (default true), so one Ctrl+Z reverts it.
+   * Pass false only for code that drives the undo stack itself — Undo and Redo.
+   * AE resolves those against the group that is still open, so grouped they
+   * revert nothing the caller asked for and desynchronize the stack.
+   */
+  undoGroup?: boolean;
   /** Per-call timeout in milliseconds. */
   timeoutMs?: number;
 }

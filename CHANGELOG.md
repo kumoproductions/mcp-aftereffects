@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **`project.undo` reverted nothing.** Like every other call it was wrapped in an undo group, and After Effects resolves Undo against the group that is still open — so the previous call survived and the undo stack was left out of step with the project. Undo and redo (`project.undo`, `command.execute` with id 16 or 2035) now run outside the group. As a consequence they can no longer be children of a `batch.run`, which is itself one undo group: issue them as their own `ae_do` call.
+
 ## [0.1.2] - 2026-08-10
 
 ### Fixed
