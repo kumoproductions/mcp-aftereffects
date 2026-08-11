@@ -1,6 +1,6 @@
 {
   "name": "@kumoproductions/mcp-aftereffects",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "TypeScript MCP server for Adobe After Effects (Windows & macOS) — project/comp/layer introspection, atomic undo-grouped operations, JSON project export/import, and single-frame rendering via file IPC.",
   "keywords": [
     "adobe",
