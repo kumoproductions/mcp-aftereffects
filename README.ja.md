@@ -1,3 +1,5 @@
+![MCP for After Effects](https://raw.githubusercontent.com/kumoproductions/mcp-aftereffects/main/assets/ogp.png)
+
 # mcp-aftereffects
 
 [English](./README.md) | 日本語

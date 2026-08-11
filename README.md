@@ -1,3 +1,5 @@
+![MCP for After Effects](https://raw.githubusercontent.com/kumoproductions/mcp-aftereffects/main/assets/ogp.png)
+
 # mcp-aftereffects
 
 [![CI](https://github.com/kumoproductions/mcp-aftereffects/actions/workflows/ci.yml/badge.svg)](https://github.com/kumoproductions/mcp-aftereffects/actions/workflows/ci.yml)
