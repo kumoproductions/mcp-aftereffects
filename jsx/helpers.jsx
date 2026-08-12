@@ -187,6 +187,107 @@ AE.resolveLayers = function (comp, target) {
     return [];
 };
 
+// ---------- Enum-valued layer attributes ----------
+// JSON can't carry ExtendScript enum objects, so layer.set_props accepts
+// well-known string names and translates them here. A value that is not a
+// string, or a key/name this table doesn't know, passes through untouched —
+// the plain assignment then succeeds on its own or reports its own error.
+// Built lazily; each enum family guarded so one missing global (old AE)
+// doesn't take the whole table down. Entries whose enum member resolved to
+// undefined are dropped — assigning undefined would throw a misleading error.
+AE._layerEnumMaps = null;
+AE.coerceLayerPropValue = function (key, val) {
+    if (typeof val !== "string") return val;
+    if (AE._layerEnumMaps === null) {
+        var maps = {};
+        try {
+            maps.autoOrient = {
+                off: AutoOrientType.NO_AUTO_ORIENT,
+                alongPath: AutoOrientType.ALONG_PATH,
+                cameraOrPointOfInterest: AutoOrientType.CAMERA_OR_POINT_OF_INTEREST,
+                charactersTowardCamera: AutoOrientType.CHARACTERS_TOWARD_CAMERA
+            };
+        } catch (eAo) {}
+        try {
+            maps.quality = {
+                best: LayerQuality.BEST,
+                draft: LayerQuality.DRAFT,
+                wireframe: LayerQuality.WIREFRAME
+            };
+        } catch (eQ) {}
+        try {
+            maps.samplingQuality = {
+                bilinear: LayerSamplingQuality.BILINEAR,
+                bicubic: LayerSamplingQuality.BICUBIC
+            };
+        } catch (eSq) {}
+        try {
+            maps.frameBlendingType = {
+                off: FrameBlendingType.NO_FRAME_BLEND,
+                frameMix: FrameBlendingType.FRAME_MIX,
+                pixelMotion: FrameBlendingType.PIXEL_MOTION
+            };
+        } catch (eFb) {}
+        try {
+            maps.blendingMode = {
+                normal: BlendingMode.NORMAL, dissolve: BlendingMode.DISSOLVE,
+                dancingDissolve: BlendingMode.DANCING_DISSOLVE,
+                darken: BlendingMode.DARKEN, multiply: BlendingMode.MULTIPLY,
+                colorBurn: BlendingMode.COLOR_BURN, classicColorBurn: BlendingMode.CLASSIC_COLOR_BURN,
+                linearBurn: BlendingMode.LINEAR_BURN, darkerColor: BlendingMode.DARKER_COLOR,
+                add: BlendingMode.ADD, lighten: BlendingMode.LIGHTEN,
+                screen: BlendingMode.SCREEN, colorDodge: BlendingMode.COLOR_DODGE,
+                classicColorDodge: BlendingMode.CLASSIC_COLOR_DODGE,
+                linearDodge: BlendingMode.LINEAR_DODGE, lighterColor: BlendingMode.LIGHTER_COLOR,
+                overlay: BlendingMode.OVERLAY, softLight: BlendingMode.SOFT_LIGHT,
+                hardLight: BlendingMode.HARD_LIGHT, linearLight: BlendingMode.LINEAR_LIGHT,
+                vividLight: BlendingMode.VIVID_LIGHT, pinLight: BlendingMode.PIN_LIGHT,
+                hardMix: BlendingMode.HARD_MIX, difference: BlendingMode.DIFFERENCE,
+                classicDifference: BlendingMode.CLASSIC_DIFFERENCE, exclusion: BlendingMode.EXCLUSION,
+                subtract: BlendingMode.SUBTRACT, divide: BlendingMode.DIVIDE,
+                hue: BlendingMode.HUE, saturation: BlendingMode.SATURATION,
+                color: BlendingMode.COLOR, luminosity: BlendingMode.LUMINOSITY,
+                stencilAlpha: BlendingMode.STENCIL_ALPHA, stencilLuma: BlendingMode.STENCIL_LUMA,
+                alphaAdd: BlendingMode.ALPHA_ADD, luminescentPremul: BlendingMode.LUMINESCENT_PREMUL
+            };
+            // The API spells it SILHOUETE_* (one T) — an Adobe typo old enough
+            // to be contractual. Probe both spellings, keep whichever exists.
+            var silA = BlendingMode.SILHOUETE_ALPHA;
+            if (silA === undefined) silA = BlendingMode.SILHOUETTE_ALPHA;
+            var silL = BlendingMode.SILHOUETE_LUMA;
+            if (silL === undefined) silL = BlendingMode.SILHOUETTE_LUMA;
+            maps.blendingMode.silhouetteAlpha = silA;
+            maps.blendingMode.silhouetteLuma = silL;
+        } catch (eBm) {}
+        try {
+            maps.lightType = {
+                spot: LightType.SPOT,
+                parallel: LightType.PARALLEL,
+                point: LightType.POINT,
+                ambient: LightType.AMBIENT
+            };
+        } catch (eLt) {}
+        // ENVIRONMENT is 24.3+ — probed separately so a build without it keeps
+        // the four classic light types even if the member access throws.
+        try {
+            if (maps.lightType && LightType.ENVIRONMENT !== undefined) {
+                maps.lightType.environment = LightType.ENVIRONMENT;
+            }
+        } catch (eEnv) {}
+        // Drop entries whose enum member is missing on this AE build.
+        for (var mk in maps) {
+            if (!maps.hasOwnProperty(mk)) continue;
+            for (var vk in maps[mk]) {
+                if (maps[mk].hasOwnProperty(vk) && maps[mk][vk] === undefined) delete maps[mk][vk];
+            }
+        }
+        AE._layerEnumMaps = maps;
+    }
+    var map = AE._layerEnumMaps.hasOwnProperty(key) ? AE._layerEnumMaps[key] : null;
+    if (map !== null && map.hasOwnProperty(val)) return map[val];
+    return val;
+};
+
 // ---------- Basic serialization ----------
 
 AE.serializeItemSummary = function (item) {

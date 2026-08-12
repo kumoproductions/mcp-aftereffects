@@ -389,7 +389,8 @@ registerOp({
 registerOp({
   name: "layer.set_props",
   category: "layer",
-  description: "Set basic layer properties. layer can be index, name, 'selected', or 'all'.",
+  description:
+    "Set basic layer properties. layer can be index, name, 'selected', or 'all'. Enum-valued attributes accept string names: quality (best|draft|wireframe), samplingQuality (bilinear|bicubic), frameBlendingType (off|frameMix|pixelMotion), autoOrient (off|alongPath|cameraOrPointOfInterest|charactersTowardCamera), blendingMode, lightType (spot|parallel|point|ambient|environment).",
   params: [
     { name: "comp", type: "any", description: "Comp name or id", required: true },
     {
@@ -411,7 +412,7 @@ registerOp({
     const lines: string[] = [];
     for (const [k, v] of Object.entries(props)) {
       lines.push(
-        `try { _l[${jsxVal(k)}] = ${jsxVal(v)}; } catch (e) { _w.push(${jsxVal(k)} + ": " + AE.errText(e)); }`,
+        `try { _l[${jsxVal(k)}] = AE.coerceLayerPropValue(${jsxVal(k)}, ${jsxVal(v)}); } catch (e) { _w.push(${jsxVal(k)} + ": " + AE.errText(e)); }`,
       );
     }
     return `
