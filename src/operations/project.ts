@@ -55,8 +55,29 @@ registerOp({
         "footage|comp|compRetainLayerSizes|project — for layered files like .psd/.ai (default footage)",
       required: false,
     },
+    {
+      name: "rangeStart",
+      type: "number",
+      description: "Sequence only: first frame number to import (ImportOptions.rangeStart)",
+      required: false,
+    },
+    {
+      name: "rangeEnd",
+      type: "number",
+      description: "Sequence only: last frame number to import (ImportOptions.rangeEnd)",
+      required: false,
+    },
   ],
   toJsx(args) {
+    const rangeSets: string[] = [];
+    if (args.rangeStart !== undefined)
+      rangeSets.push(
+        `try { imp.rangeStart = ${jsxVal(args.rangeStart)}; } catch (eRs) { return { ok: false, error: "rangeStart not supported on this AE: " + AE.errText(eRs) }; }`,
+      );
+    if (args.rangeEnd !== undefined)
+      rangeSets.push(
+        `try { imp.rangeEnd = ${jsxVal(args.rangeEnd)}; } catch (eRe) { return { ok: false, error: "rangeEnd not supported on this AE: " + AE.errText(eRe) }; }`,
+      );
     return `
             var f = new File(${jsxVal(args.path)});
             if (!f.exists) return { ok: false, error: "file not found" };
@@ -64,6 +85,7 @@ registerOp({
             if (${jsxVal(!!args.sequence)}) {
                 imp.sequence = true;
                 imp.forceAlphabetical = ${jsxVal(!!args.forceAlphabetical)};
+                ${rangeSets.join("\n")}
             }
             var _importAs = ${jsxVal(args.importAs ?? null)};
             if (_importAs !== null) {
@@ -606,6 +628,29 @@ registerOp({
     return `
             var _consolidated = app.project.consolidateFootage();
             return { ok: true, consolidated: _consolidated, numItems: app.project.numItems };
+        `;
+  },
+});
+
+registerOp({
+  name: "project.import_placeholder",
+  category: "project",
+  description:
+    "Create a placeholder footage item (Project.importPlaceholder) to build comps before the real footage exists. Relink later with footage.replace.",
+  params: [
+    { name: "name", type: "string", description: "Placeholder name", required: true },
+    { name: "width", type: "number", description: "Width in px", required: true },
+    { name: "height", type: "number", description: "Height in px", required: true },
+    { name: "frameRate", type: "number", description: "Frame rate", required: true },
+    { name: "duration", type: "number", description: "Duration in seconds", required: true },
+  ],
+  toJsx(args) {
+    return `
+            var _item = null;
+            try {
+                _item = app.project.importPlaceholder(${jsxVal(args.name)}, ${jsxVal(args.width)}, ${jsxVal(args.height)}, ${jsxVal(args.frameRate)}, ${jsxVal(args.duration)});
+            } catch (eIp) { return { ok: false, error: "importPlaceholder failed: " + AE.errText(eIp) }; }
+            return { ok: true, id: _item.id, name: _item.name, width: _item.width, height: _item.height, duration: _item.duration };
         `;
   },
 });

@@ -160,3 +160,40 @@ registerOp({
         `;
   },
 });
+
+registerOp({
+  name: "item.usages",
+  category: "item",
+  readOnly: true,
+  description:
+    "Reverse lookup: list every comp that uses a footage item or comp (AVItem.usedIn), with the layer indices that reference it.",
+  params: [
+    {
+      name: "item",
+      type: "any",
+      description: "Item id (number) or name (string)",
+      required: true,
+    },
+  ],
+  toJsx(args) {
+    return `
+            var _item = AE.findItem(${jsxVal(args.item)});
+            if (!_item) return { ok: false, error: "no project item matching " + ${jsxVal(String(args.item))} };
+            if (_item instanceof FolderItem) return { ok: false, error: "folders have no usages — list their contents with item.list" };
+            var _comps = [];
+            try { _comps = _item.usedIn; } catch (eU) { return { ok: false, error: "usedIn failed: " + AE.errText(eU) }; }
+            var _out = [];
+            for (var _i = 0; _i < _comps.length; _i++) {
+                var _c = _comps[_i];
+                var _layers = [];
+                for (var _li = 1; _li <= _c.numLayers; _li++) {
+                    var _srcId = null;
+                    try { _srcId = _c.layer(_li).source ? _c.layer(_li).source.id : null; } catch (eS) {}
+                    if (_srcId === _item.id) _layers.push(_li);
+                }
+                _out.push({ compId: _c.id, compName: _c.name, layerIndices: _layers });
+            }
+            return { ok: true, item: _item.name, itemId: _item.id, usedIn: _out, count: _out.length };
+        `;
+  },
+});
