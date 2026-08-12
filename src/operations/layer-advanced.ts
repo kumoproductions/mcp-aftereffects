@@ -215,7 +215,8 @@ registerOp({
 registerOp({
   name: "layer.set_track_matte",
   category: "layer",
-  description: "Set track matte for a layer. The matte layer must be directly above the target.",
+  description:
+    "Set (or remove) a track matte on a layer. Uses AVLayer.setTrackMatte (AE 23.0+): the matte can be ANY layer in the comp — it does not need to sit directly above the target.",
   params: [
     { name: "comp", type: "any", description: "Comp name or id", required: true },
     {
@@ -226,9 +227,9 @@ registerOp({
     },
     {
       name: "matteLayer",
-      type: "number",
-      description: "1-based index of the matte source layer (must be above target)",
-      required: true,
+      type: "any",
+      description: "Matte source layer: 1-based index or name. Ignored when matteType is 'none'.",
+      required: false,
     },
     {
       name: "matteType",
@@ -251,10 +252,13 @@ registerOp({
             if (!_type && ${jsxVal(args.matteType)} !== "none") return { ok: false, error: "unknown matteType" };
             if (${jsxVal(args.matteType)} === "none") {
                 _layer.removeTrackMatte();
-            } else {
-                _layer.setTrackMatte(_comp.layer(${jsxVal(args.matteLayer)}), _type);
+                return { ok: true, layer: _layer.name, matte: null };
             }
-            return { ok: true, layer: _layer.name };
+            var _matte = AE.findLayerInComp(_comp, ${jsxVal(args.matteLayer)});
+            if (!_matte) return { ok: false, error: "no matte layer matching " + ${jsxVal(String(args.matteLayer))} };
+            if (_matte === _layer) return { ok: false, error: "a layer cannot be its own track matte" };
+            _layer.setTrackMatte(_matte, _type);
+            return { ok: true, layer: _layer.name, matte: _matte.name };
         `;
   },
 });
