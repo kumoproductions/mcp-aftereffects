@@ -61,18 +61,66 @@ registerOp({
 registerOp({
   name: "layer.create_text",
   category: "layer",
-  description: "Create a text layer.",
+  description:
+    "Create a text layer: point text by default, paragraph (box) text when boxSize is given, vertical when orientation='vertical' (AE 24.2+). Point<->box conversion is not scriptable, so pick the right kind here.",
   params: [
     { name: "comp", type: "any", description: "Comp name or id", required: true },
     { name: "text", type: "string", description: "Text content", required: false, default: "" },
     { name: "name", type: "string", description: "Layer name", required: false },
+    {
+      name: "boxSize",
+      type: "array",
+      description: "[width, height] — creates paragraph (box) text instead of point text",
+      required: false,
+    },
+    {
+      name: "boxPosition",
+      type: "array",
+      description: "[x, y] top-left of the box in layer space (box text only)",
+      required: false,
+    },
+    {
+      name: "orientation",
+      type: "string",
+      description: "horizontal|vertical (vertical needs AE 24.2+)",
+      required: false,
+      default: "horizontal",
+    },
   ],
   toJsx(args) {
+    // Hoisted: the codegen lint's template scanner cannot see through raw
+    // braces inside a `${…}` interpolation.
+    const boxPosJsx = !args.boxPosition
+      ? ""
+      : `try {
+                var _src = _layer.property("Source Text");
+                var _doc = _src.value;
+                _doc.boxTextPos = ${jsxVal(args.boxPosition)};
+                _src.setValue(_doc);
+            } catch (eBp) {}`;
     return `
             ${jsxCompPreamble(args)}
-            var _layer = _comp.layers.addText(${jsxVal(args.text ?? "")});
+            var _box = ${jsxVal(args.boxSize ?? null)};
+            var _vertical = ${jsxVal(args.orientation)} === "vertical";
+            var _layer;
+            if (_box !== null) {
+                if (_vertical) {
+                    if (typeof _comp.layers.addVerticalBoxText !== "function") return { ok: false, error: "vertical box text needs AE 24.2+" };
+                    _layer = _comp.layers.addVerticalBoxText(_box, ${jsxVal(args.text ?? "")});
+                } else {
+                    _layer = _comp.layers.addBoxText(_box, ${jsxVal(args.text ?? "")});
+                }
+            } else {
+                if (_vertical) {
+                    if (typeof _comp.layers.addVerticalText !== "function") return { ok: false, error: "vertical text needs AE 24.2+" };
+                    _layer = _comp.layers.addVerticalText(${jsxVal(args.text ?? "")});
+                } else {
+                    _layer = _comp.layers.addText(${jsxVal(args.text ?? "")});
+                }
+            }
             ${args.name ? `_layer.name = ${jsxVal(args.name)};` : ""}
-            return { ok: true, index: _layer.index, name: _layer.name };
+            ${boxPosJsx}
+            return { ok: true, index: _layer.index, name: _layer.name, boxText: _box !== null, vertical: _vertical };
         `;
   },
 });
