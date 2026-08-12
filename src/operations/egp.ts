@@ -247,3 +247,19 @@ registerOp({
         `;
   },
 });
+
+registerOp({
+  name: "egp.open_in_panel",
+  category: "egp",
+  description:
+    "Open a comp in the Essential Graphics panel as the template master (CompItem.openInEssentialGraphics, AE 15.0+).",
+  params: [{ name: "comp", type: "any", description: "Comp name or id", required: true }],
+  toJsx(args) {
+    return `
+            ${jsxCompPreamble(args)}
+            if (typeof _comp.openInEssentialGraphics !== "function") return { ok: false, error: "openInEssentialGraphics needs AE 15.0+" };
+            try { _comp.openInEssentialGraphics(); } catch (eEg) { return { ok: false, error: "openInEssentialGraphics failed: " + AE.errText(eEg) }; }
+            return { ok: true, comp: _comp.name };
+        `;
+  },
+});
