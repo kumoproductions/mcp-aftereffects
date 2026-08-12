@@ -818,4 +818,31 @@ describe("e2e: egp / viewer / project / shape", () => {
     const res = await o().run<{ numItems: number }>("project.new", { save: false });
     expect(res.numItems).toBe(0);
   });
+
+  it("undo still works after crossing a project boundary (UndoGroup Mismatch regression)", async (ctx) => {
+    if (!ready) return ctx.skip();
+    // project.new just crossed a project boundary. If any call had left an
+    // undo group open across it (the bug class behind AE 26's async
+    // "UndoGroup Mismatch" dialog), the undo stack would now be corrupted for
+    // the whole session: the batch below would not revert, and the dialog
+    // would wedge every later call. A passing revert is the proof the
+    // exemption list (undo/redo + project boundaries) is complete.
+    await o().run("comp.create", {
+      name: "post_boundary",
+      width: 100,
+      height: 100,
+      fps: 30,
+      duration: 5,
+    });
+    await o().run("batch.run", {
+      ops: [
+        { operation: "layer.create_null", args: { comp: "post_boundary", name: "pb_a" } },
+        { operation: "layer.create_null", args: { comp: "post_boundary", name: "pb_b" } },
+      ],
+    });
+    const undone = await o().run<{ undone: number }>("project.undo", { count: 1 });
+    expect(undone.undone).toBe(1);
+    const after = await o().run<{ layers: unknown[] }>("comp.info", { comp: "post_boundary" });
+    expect(after.layers, "one undo must revert the whole batch").toHaveLength(0);
+  });
 });

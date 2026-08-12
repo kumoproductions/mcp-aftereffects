@@ -158,6 +158,11 @@ export async function backupAndOpenTestProject(
     `,
     label: "test_backup_and_new",
     timeoutMs: 60_000,
+    // Closing/replacing the project while the dispatcher's undo group is open
+    // orphans that group: AE 26 raises an async "UndoGroup Mismatch" dialog
+    // and undo stays broken for the whole session — which is exactly what the
+    // undo e2e test then trips over. Same exemption as undo/redo requests.
+    undoGroup: false,
   });
   if (!res.ok) {
     throw new Error("backup/newProject failed: " + res.error);
@@ -177,6 +182,7 @@ export async function restoreUserProject(
       code: "app.project.close(CloseOptions.DO_NOT_SAVE_CHANGES); app.newProject(); return { restored: false };",
       label: "test_teardown_empty",
       timeoutMs: 30_000,
+      undoGroup: false, // crosses a project boundary — see backupAndOpenTestProject
     });
     return;
   }
@@ -190,6 +196,7 @@ export async function restoreUserProject(
     `,
     label: "test_restore_user_project",
     timeoutMs: 60_000,
+    undoGroup: false, // crosses a project boundary — see backupAndOpenTestProject
   });
   if (!res.ok) throw new Error("restore failed: " + res.error);
 }
