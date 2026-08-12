@@ -475,6 +475,78 @@ describe("3D and layer parity ops", () => {
   });
 });
 
+describe("footage parity ops", () => {
+  it("footage.reload guards non-file sources", () => {
+    const jsx = getOp("footage.reload")!.toJsx({ item: "clip.mov" });
+    expect(jsx).toContain("_src.reload()");
+    expect(jsx).toContain("not file-backed footage");
+  });
+
+  it("footage.list_missing reports path and usages", () => {
+    const op = getOp("footage.list_missing");
+    expect(op!.readOnly).toBe(true);
+    const jsx = op!.toJsx({});
+    expect(jsx).toContain("footageMissing");
+    expect(jsx).toContain("missingFootagePath");
+    expect(jsx).toContain("usedIn");
+  });
+
+  it("footage.replace_with_solid / placeholder keep dimensions by default", () => {
+    const solid = getOp("footage.replace_with_solid")!.toJsx({ item: 1, color: [1, 0, 0] });
+    expect(solid).toContain("replaceWithSolid([1,0,0]");
+    expect(solid).toContain("_item.width || 1920");
+    const ph = getOp("footage.replace_with_placeholder")!.toJsx({ item: 1 });
+    expect(ph).toContain("replaceWithPlaceholder(");
+  });
+
+  it("footage.interpret maps pulldown phases and guess methods", () => {
+    const jsx = getOp("footage.interpret")!.toJsx({
+      item: 1,
+      guessPulldown: "24Pa",
+      removePulldown: "WSSWW",
+    });
+    expect(jsx).toContain("PulldownMethod.ADVANCE_24P");
+    expect(jsx).toContain("PulldownPhase.WSSWW");
+  });
+
+  it("footage.set_proxy supports solid and placeholder proxies", () => {
+    const solid = getOp("footage.set_proxy")!.toJsx({ item: 1, solidColor: [0, 0, 0] });
+    expect(solid).toContain("setProxyWithSolid");
+    const ph = getOp("footage.set_proxy")!.toJsx({ item: 1, placeholder: true });
+    expect(ph).toContain("setProxyWithPlaceholder");
+  });
+
+  it("item.usages walks layers to find referencing indices", () => {
+    const op = getOp("item.usages");
+    expect(op!.readOnly).toBe(true);
+    const jsx = op!.toJsx({ item: "clip.mov" });
+    expect(jsx).toContain("usedIn");
+    expect(jsx).toContain("layerIndices");
+  });
+
+  it("project.import_placeholder passes the five required values", () => {
+    const jsx = getOp("project.import_placeholder")!.toJsx({
+      name: "PH",
+      width: 1920,
+      height: 1080,
+      frameRate: 24,
+      duration: 10,
+    });
+    expect(jsx).toContain('importPlaceholder("PH", 1920, 1080, 24, 10)');
+  });
+
+  it("project.import_file wires rangeStart/rangeEnd into ImportOptions", () => {
+    const jsx = getOp("project.import_file")!.toJsx({
+      path: "C:/seq/frame_0001.png",
+      sequence: true,
+      rangeStart: 10,
+      rangeEnd: 50,
+    });
+    expect(jsx).toContain("imp.rangeStart = 10");
+    expect(jsx).toContain("imp.rangeEnd = 50");
+  });
+});
+
 describe("layer.set_props enum coercion", () => {
   it("routes every assignment through AE.coerceLayerPropValue", () => {
     const op = getOp("layer.set_props");
