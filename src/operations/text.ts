@@ -840,6 +840,12 @@ registerOp({
     { name: "value", type: "number", description: "Initial axis value", required: false },
   ],
   toJsx(args) {
+    // Hoisted: the codegen lint's template scanner cannot see through raw
+    // braces inside a `${…}` interpolation.
+    const valueJsx =
+      args.value === undefined
+        ? ""
+        : `try { _axis.setValue(${jsxVal(args.value)}); } catch (eV) { _w.push("value: " + AE.errText(eV)); }`;
     return `
             ${jsxCompLayerPreamble(args)}
             if (!(_layer instanceof TextLayer)) return { ok: false, error: "not a TextLayer" };
@@ -858,11 +864,7 @@ registerOp({
             var _axis = null;
             try { _axis = _animProps.addVariableFontAxis(${jsxVal(args.axisTag)}); } catch (eAx) { return { ok: false, error: "addVariableFontAxis failed: " + AE.errText(eAx) }; }
             var _w = [];
-            ${
-              args.value !== undefined
-                ? `try { _axis.setValue(${jsxVal(args.value)}); } catch (eV) { _w.push("value: " + AE.errText(eV)); }`
-                : ""
-            }
+            ${valueJsx}
             return { ok: true, animator: _anim.name, axis: AE.safeGet(function () { return _axis.name; }, ${jsxVal(args.axisTag)}), warnings: _w };
         `;
   },
@@ -964,6 +966,124 @@ registerOp({
                 } catch (eSel) { _w.push("selector: " + AE.errText(eSel)); }
             }
             return { ok: true, animator: _anim.name, animatorIndex: _anim.propertyIndex, addedProperties: _added, selector: _selName, warnings: _w };
+        `;
+  },
+});
+
+registerOp({
+  name: "text.paste_range",
+  category: "text",
+  description:
+    "Paste the TEXT AND STYLING of one character range into another (CharacterRange.pasteFrom, AE 25.1+) — replaces the target range's content. Source defaults to the same layer; pass sourceLayer to copy across layers.",
+  params: [
+    { name: "comp", type: "any", description: "Comp name or id", required: true },
+    {
+      name: "layer",
+      type: "any",
+      description: "TARGET text layer (1-based index or name)",
+      required: true,
+    },
+    {
+      name: "start",
+      type: "number",
+      description: "Target range start (0-based character index)",
+      required: true,
+    },
+    {
+      name: "end",
+      type: "number",
+      description: "Target range end (exclusive; default: end of text)",
+      required: false,
+    },
+    {
+      name: "sourceLayer",
+      type: "any",
+      description: "SOURCE text layer (default: same as layer)",
+      required: false,
+    },
+    {
+      name: "sourceStart",
+      type: "number",
+      description: "Source range start (0-based character index)",
+      required: true,
+    },
+    {
+      name: "sourceEnd",
+      type: "number",
+      description: "Source range end (exclusive; default: end of source text)",
+      required: false,
+    },
+  ],
+  toJsx(args) {
+    return `
+            ${jsxCompLayerPreamble(args)}
+            if (!(_layer instanceof TextLayer)) return { ok: false, error: "not a TextLayer" };
+            var _srcLayerArg = ${jsxVal(args.sourceLayer ?? null)};
+            var _srcLayer = _srcLayerArg === null ? _layer : AE.findLayerInComp(_comp, _srcLayerArg);
+            if (!_srcLayer) return { ok: false, error: "no source layer matching " + String(_srcLayerArg) };
+            if (!(_srcLayer instanceof TextLayer)) return { ok: false, error: "source layer is not a TextLayer" };
+            var _tgtProp = _layer.property("Source Text");
+            var _tgtDoc = _tgtProp.value;
+            var _srcDoc = _srcLayer === _layer ? _tgtDoc : _srcLayer.property("Source Text").value;
+            if (typeof _tgtDoc.characterRange !== "function") return { ok: false, error: "text ranges need AE 24.3+" };
+            var _tStart = ${jsxVal(args.start)};
+            var _tEnd = ${jsxVal(args.end ?? null)};
+            if (_tEnd === null) _tEnd = _tgtDoc.text.length;
+            var _sStart = ${jsxVal(args.sourceStart)};
+            var _sEnd = ${jsxVal(args.sourceEnd ?? null)};
+            if (_sEnd === null) _sEnd = _srcDoc.text.length;
+            var _tgt = null;
+            var _src = null;
+            try {
+                _tgt = _tgtDoc.characterRange(_tStart, _tEnd);
+                _src = _srcDoc.characterRange(_sStart, _sEnd);
+            } catch (eRg) { return { ok: false, error: "range lookup failed: " + AE.errText(eRg) }; }
+            if (typeof _tgt.pasteFrom !== "function") return { ok: false, error: "pasteFrom needs AE 25.1+" };
+            try { _tgt.pasteFrom(_src); } catch (eP) { return { ok: false, error: "pasteFrom failed: " + AE.errText(eP) }; }
+            _tgtProp.setValue(_tgtDoc);
+            return { ok: true, text: _tgtProp.value.text };
+        `;
+  },
+});
+
+registerOp({
+  name: "text.reset_style",
+  category: "text",
+  description:
+    "Reset a text layer's styling to the default Character and/or Paragraph panel settings (TextDocument.resetCharStyle / resetParagraphStyle).",
+  params: [
+    { name: "comp", type: "any", description: "Comp name or id", required: true },
+    {
+      name: "layer",
+      type: "any",
+      description: "1-based layer index, or the layer name",
+      required: true,
+    },
+    {
+      name: "scope",
+      type: "string",
+      description: "character|paragraph|both (default both)",
+      required: false,
+      default: "both",
+    },
+  ],
+  toJsx(args) {
+    return `
+            ${jsxCompLayerPreamble(args)}
+            if (!(_layer instanceof TextLayer)) return { ok: false, error: "not a TextLayer" };
+            var _scope = ${jsxVal(args.scope ?? "both")};
+            if (_scope !== "character" && _scope !== "paragraph" && _scope !== "both") return { ok: false, error: "scope must be character|paragraph|both" };
+            var _src = _layer.property("Source Text");
+            var _doc = _src.value;
+            var _w = [];
+            if (_scope === "character" || _scope === "both") {
+                try { _doc.resetCharStyle(); } catch (eC) { _w.push("resetCharStyle: " + AE.errText(eC)); }
+            }
+            if (_scope === "paragraph" || _scope === "both") {
+                try { _doc.resetParagraphStyle(); } catch (eP) { _w.push("resetParagraphStyle: " + AE.errText(eP)); }
+            }
+            _src.setValue(_doc);
+            return { ok: true, scope: _scope, warnings: _w };
         `;
   },
 });
