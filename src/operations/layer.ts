@@ -170,7 +170,8 @@ registerOp({
     {
       name: "lightType",
       type: "string",
-      description: "spot|parallel|point|ambient",
+      description:
+        "spot|parallel|point|ambient|environment (environment needs AE 24.3+ / Advanced 3D)",
       required: false,
       default: "spot",
     },
@@ -178,19 +179,58 @@ registerOp({
   toJsx(args) {
     return `
             ${jsxCompPreamble(args)}
-            var _layer = _comp.layers.addLight(${jsxVal(args.name ?? "Light")}, [_comp.width/2, _comp.height/2]);
             var _ltMap = {
                 "spot": LightType.SPOT,
                 "parallel": LightType.PARALLEL,
                 "point": LightType.POINT,
                 "ambient": LightType.AMBIENT
             };
+            // 24.3+ only — probed so older hosts keep the classic four.
+            try { if (LightType.ENVIRONMENT !== undefined) _ltMap.environment = LightType.ENVIRONMENT; } catch (eEnv) {}
             var _ltArg = ${jsxVal(args.lightType ?? "spot")};
-            var _applied = null;
-            if (_ltMap[_ltArg]) {
-                try { _layer.lightType = _ltMap[_ltArg]; _applied = _ltArg; } catch (eLt) {}
+            if (!_ltMap.hasOwnProperty(_ltArg)) {
+                return { ok: false, error: "unknown lightType '" + _ltArg + "'" + (_ltArg === "environment" ? " — environment lights need AE 24.3+" : "") };
             }
+            var _layer = _comp.layers.addLight(${jsxVal(args.name ?? "Light")}, [_comp.width/2, _comp.height/2]);
+            var _applied = null;
+            try { _layer.lightType = _ltMap[_ltArg]; _applied = _ltArg; } catch (eLt) {}
             return { ok: true, index: _layer.index, name: _layer.name, lightType: _applied };
+        `;
+  },
+});
+
+registerOp({
+  name: "layer.create_parametric_mesh",
+  category: "layer",
+  description:
+    "Create a parametric 3D mesh layer (LayerCollection.addParametricMesh, AE 26.3+): cube|sphere|plane|cylinder|cone|torus. Best rendered with the Advanced 3D renderer (comp.set_renderer).",
+  params: [
+    { name: "comp", type: "any", description: "Comp name or id", required: true },
+    { name: "name", type: "string", description: "Layer name", required: false, default: "Mesh" },
+    {
+      name: "meshType",
+      type: "string",
+      description: "cube|sphere|plane|cylinder|cone|torus",
+      required: true,
+    },
+  ],
+  toJsx(args) {
+    return `
+            ${jsxCompPreamble(args)}
+            if (typeof _comp.layers.addParametricMesh !== "function") return { ok: false, error: "addParametricMesh needs AE 26.3+" };
+            var _mtMap = {
+                "cube": ParametricMeshType.CUBE,
+                "sphere": ParametricMeshType.SPHERE,
+                "plane": ParametricMeshType.PLANE,
+                "cylinder": ParametricMeshType.CYLINDER,
+                "cone": ParametricMeshType.CONE,
+                "torus": ParametricMeshType.TORUS
+            };
+            var _mtArg = ${jsxVal(args.meshType)};
+            if (!_mtMap.hasOwnProperty(_mtArg)) return { ok: false, error: "meshType must be cube|sphere|plane|cylinder|cone|torus" };
+            var _layer = null;
+            try { _layer = _comp.layers.addParametricMesh(${jsxVal(args.name ?? "Mesh")}, _mtMap[_mtArg]); } catch (ePm) { return { ok: false, error: "addParametricMesh failed: " + AE.errText(ePm) }; }
+            return { ok: true, index: _layer.index, name: _layer.name, meshType: _mtArg };
         `;
   },
 });
@@ -257,7 +297,8 @@ registerOp({
 registerOp({
   name: "layer.set_parent",
   category: "layer",
-  description: "Set or clear a layer's parent.",
+  description:
+    "Set or clear a layer's parent. By default AE compensates the child's transform so it doesn't move; jump=true skips compensation (setParentWithJump) so the child adopts the parent's space.",
   params: [
     { name: "comp", type: "any", description: "Comp name or id", required: true },
     {
@@ -273,16 +314,67 @@ registerOp({
       required: true,
       nullable: true,
     },
+    {
+      name: "jump",
+      type: "boolean",
+      description: "true = no transform compensation (setParentWithJump). Default false.",
+      required: false,
+      default: false,
+    },
   ],
   toJsx(args) {
     const parentVal =
       args.parentLayer === null || args.parentLayer === 0
         ? "null"
         : `_comp.layer(${jsxVal(args.parentLayer)})`;
+    const assign =
+      args.jump === true
+        ? `_layer.setParentWithJump(${parentVal});`
+        : `_layer.parent = ${parentVal};`;
     return `
             ${jsxCompLayerPreamble(args)}
-            _layer.parent = ${parentVal};
+            ${assign}
             return { ok: true, parent: _layer.parent ? { index: _layer.parent.index, name: _layer.parent.name } : null };
+        `;
+  },
+});
+
+registerOp({
+  name: "layer.scene_edit_detection",
+  category: "layer",
+  description:
+    "Run Scene Edit Detection on a video layer (Layer.doSceneEditDetection, AE 22.3+): find cuts in edited footage and mark or split at them.",
+  params: [
+    { name: "comp", type: "any", description: "Comp name or id", required: true },
+    {
+      name: "layer",
+      type: "any",
+      description: "1-based layer index, or the layer name",
+      required: true,
+    },
+    {
+      name: "mode",
+      type: "string",
+      description:
+        "markers (add layer markers) | split (split layer) | splitPrecomp (split + precompose each) | none (detect only)",
+      required: true,
+    },
+  ],
+  toJsx(args) {
+    return `
+            ${jsxCompLayerPreamble(args)}
+            if (typeof _layer.doSceneEditDetection !== "function") return { ok: false, error: "doSceneEditDetection needs AE 22.3+" };
+            var _sdMap = {
+                "markers": SceneEditDetectionMode.MARKERS,
+                "split": SceneEditDetectionMode.SPLIT,
+                "splitPrecomp": SceneEditDetectionMode.SPLIT_PRECOMP,
+                "none": SceneEditDetectionMode.NONE
+            };
+            var _mode = ${jsxVal(args.mode)};
+            if (!_sdMap.hasOwnProperty(_mode)) return { ok: false, error: "mode must be markers|split|splitPrecomp|none" };
+            var _edits = null;
+            try { _edits = _layer.doSceneEditDetection(_sdMap[_mode]); } catch (eSd) { return { ok: false, error: "doSceneEditDetection failed: " + AE.errText(eSd) }; }
+            return { ok: true, mode: _mode, editTimes: AE.valueToJson(_edits), numLayers: _comp.numLayers };
         `;
   },
 });
