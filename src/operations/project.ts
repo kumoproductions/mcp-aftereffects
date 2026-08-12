@@ -670,11 +670,16 @@ registerOp({
     },
   ],
   toJsx(args) {
+    // close(DO_NOT_SAVE_CHANGES) BEFORE newProject: calling newProject on a
+    // dirty project pops the "Save changes?" modal, which blocks all scripting
+    // (beginSuppressDialogs does not cover confirmation dialogs) — the E2E run
+    // that discovered this had to be recovered with taskkill.
     return `
             if (${jsxVal(!!args.save)}) {
                 if (app.project.file) { app.project.save(); }
                 else if (app.project.numItems > 0) { return { ok: false, error: "current project has no file path — save it first (ae_save_project with a path) or pass save=false to discard" }; }
             }
+            app.project.close(CloseOptions.DO_NOT_SAVE_CHANGES);
             var _p = app.newProject();
             if (!_p) return { ok: false, error: "app.newProject returned null" };
             return { ok: true, numItems: _p.numItems };
