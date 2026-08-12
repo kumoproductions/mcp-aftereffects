@@ -340,6 +340,11 @@ AE.serializeLayerSummary = function (layer) {
     if (layer instanceof TextLayer) type = "TextLayer";
     if (layer instanceof CameraLayer) type = "CameraLayer";
     if (layer instanceof LightLayer) type = "LightLayer";
+    // AE 24.4+ / 26.3+ layer classes. ThreeDModelLayer subclasses AVLayer;
+    // ParametricMeshLayer does NOT (verified on 26.3), so both need their own
+    // probe-guarded checks rather than relying on the chain above.
+    try { if (typeof ThreeDModelLayer !== "undefined" && layer instanceof ThreeDModelLayer) type = "ThreeDModelLayer"; } catch (e3d) {}
+    try { if (typeof ParametricMeshLayer !== "undefined" && layer instanceof ParametricMeshLayer) type = "ParametricMeshLayer"; } catch (ePm) {}
     var out = {
         index: layer.index,
         // Stable layer id (AE 22.0+) — survives reordering/renaming. null on older hosts.
