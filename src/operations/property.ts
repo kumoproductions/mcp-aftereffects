@@ -266,3 +266,48 @@ registerOp({
         `;
   },
 });
+
+registerOp({
+  name: "property.move",
+  category: "property",
+  description:
+    "Reorder a property within its parent INDEXED group (PropertyBase.moveTo): masks, shape contents, text animators. For effects use effect.move.",
+  params: [
+    { name: "comp", type: "any", description: "Comp name or id", required: true },
+    {
+      name: "layer",
+      type: "any",
+      description: "1-based layer index, or the layer name",
+      required: true,
+    },
+    {
+      name: "property",
+      type: "array",
+      description: "Path to the property to move (a member of an indexed group)",
+      required: true,
+    },
+    {
+      name: "toIndex",
+      type: "number",
+      description: "1-based target position within the parent group",
+      required: true,
+    },
+  ],
+  toJsx(args) {
+    return `
+            ${jsxCompLayerPreamble(args)}
+            var _propPath = ${jsxVal(args.property)};
+            ${jsxPropertyLookup()}
+            var _parent = _node.parentProperty;
+            if (!_parent || _parent.propertyType !== PropertyType.INDEXED_GROUP) {
+                return { ok: false, error: "property is not a member of an indexed group — only those can be reordered" };
+            }
+            var _to = ${jsxVal(args.toIndex)};
+            if (_to < 1 || _to > _parent.numProperties) return { ok: false, error: "toIndex out of range (1-" + _parent.numProperties + ")" };
+            try { _node.moveTo(_to); } catch (eMv) { return { ok: false, error: "moveTo failed: " + AE.errText(eMv) }; }
+            var _order = [];
+            for (var _i = 1; _i <= _parent.numProperties; _i++) _order.push(_parent.property(_i).name);
+            return { ok: true, order: _order };
+        `;
+  },
+});
