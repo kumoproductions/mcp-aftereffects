@@ -1073,7 +1073,7 @@ describe("e2e: low-priority parity ops", () => {
       layer: "ct_solid",
       topLeft: [0, 0, 0],
       topRight: [500, 0, 0],
-      bottomRight: [500, 500, 0],
+      bottomLeft: [0, 500, 0],
     });
     expect(res.transform.scale).toBeTruthy();
     expect(res.transform.position).toBeTruthy();
