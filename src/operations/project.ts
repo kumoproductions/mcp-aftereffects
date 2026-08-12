@@ -654,3 +654,30 @@ registerOp({
         `;
   },
 });
+
+registerOp({
+  name: "project.new",
+  category: "project",
+  description:
+    "Create a NEW empty project (app.newProject). Closes the current project — pass save=true to save it first (only works when it has a file path). Destructive to unsaved work.",
+  params: [
+    {
+      name: "save",
+      type: "boolean",
+      description: "Save the current project before closing (default false; needs a file path)",
+      required: false,
+      default: false,
+    },
+  ],
+  toJsx(args) {
+    return `
+            if (${jsxVal(!!args.save)}) {
+                if (app.project.file) { app.project.save(); }
+                else if (app.project.numItems > 0) { return { ok: false, error: "current project has no file path — save it first (ae_save_project with a path) or pass save=false to discard" }; }
+            }
+            var _p = app.newProject();
+            if (!_p) return { ok: false, error: "app.newProject returned null" };
+            return { ok: true, numItems: _p.numItems };
+        `;
+  },
+});
