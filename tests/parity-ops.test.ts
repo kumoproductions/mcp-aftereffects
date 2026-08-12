@@ -384,6 +384,48 @@ describe("keyframe interpolation and labels", () => {
   });
 });
 
+describe("effect and property reordering", () => {
+  it("effect.move range-checks both indices and reports the new order", () => {
+    const jsx = getOp("effect.move")!.toJsx({ comp: "Main", layer: 1, effectIndex: 3, toIndex: 1 });
+    expect(jsx).toContain("moveTo(_to)");
+    expect(jsx).toContain("effectIndex out of range");
+    expect(jsx).toContain("_order.push");
+  });
+
+  it("property.move only accepts members of indexed groups", () => {
+    const jsx = getOp("property.move")!.toJsx({
+      comp: "Main",
+      layer: 1,
+      property: ["Masks", "Mask 1"],
+      toIndex: 2,
+    });
+    expect(jsx).toContain("PropertyType.INDEXED_GROUP");
+    expect(jsx).toContain("moveTo(_to)");
+  });
+});
+
+describe("dropdown menu control", () => {
+  it("effect.set_dropdown_items finds the menu property via isDropdownEffect", () => {
+    const jsx = getOp("effect.set_dropdown_items")!.toJsx({
+      comp: "Main",
+      layer: 1,
+      effect: "Color Choice",
+      items: ["Red", "Green", "-", "Custom"],
+    });
+    expect(jsx).toContain("isDropdownEffect");
+    expect(jsx).toContain('setPropertyParameters(["Red","Green","-","Custom"]'.replace("]'", "]"));
+    expect(jsx).toContain("AE 17.0.1+");
+  });
+
+  it("effect.get_dropdown_items reads items, value, and valueText", () => {
+    const op = getOp("effect.get_dropdown_items");
+    expect(op!.readOnly).toBe(true);
+    const jsx = op!.toJsx({ comp: "Main", layer: 1, effect: 1 });
+    expect(jsx).toContain("propertyParameters");
+    expect(jsx).toContain("valueText");
+  });
+});
+
 describe("layer.set_props enum coercion", () => {
   it("routes every assignment through AE.coerceLayerPropValue", () => {
     const op = getOp("layer.set_props");
