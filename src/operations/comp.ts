@@ -81,6 +81,72 @@ registerOp({
   },
 });
 
+// Renderer friendly-name resolution. Adobe has shipped two matchName schemes:
+// the classic one ("ADBE Advanced 3d"=Classic 3D, "ADBE Calder"=Advanced 3D,
+// "ADBE Ernst"=Cinema 4D) and a renamed one that appeared in a 24.x beta
+// ("ADBE Classic 3d"/"ADBE Advanced 3d"/"ADBE Cinema 4d" — where
+// "ADBE Advanced 3d" suddenly meant Advanced 3D). Detected at runtime by
+// which names the host actually lists, so friendly names stay correct on both.
+const RENDERER_RESOLVE_JSX = `
+    var _avail = _comp.renderers;
+    var _has = {};
+    for (var _ri = 0; _ri < _avail.length; _ri++) _has[_avail[_ri]] = true;
+    var _renamed = _has.hasOwnProperty("ADBE Classic 3d");
+    var _friendly = {};
+    if (_renamed) {
+        _friendly.classic3d = "ADBE Classic 3d";
+        _friendly.advanced3d = "ADBE Advanced 3d";
+        _friendly.cinema4d = "ADBE Cinema 4d";
+    } else {
+        _friendly.classic3d = "ADBE Advanced 3d";
+        _friendly.advanced3d = "ADBE Calder";
+        _friendly.cinema4d = "ADBE Ernst";
+    }
+`;
+
+registerOp({
+  name: "comp.set_renderer",
+  category: "comp",
+  description:
+    "Switch a comp's 3D renderer: classic3d | advanced3d | cinema4d (or a raw matchName from comp.list_renderers). Advanced 3D is required for 3D model layers, parametric meshes, and environment lights to render.",
+  params: [
+    { name: "comp", type: "any", description: "Comp name or id", required: true },
+    {
+      name: "renderer",
+      type: "string",
+      description: "classic3d|advanced3d|cinema4d, or an exact renderer matchName",
+      required: true,
+    },
+  ],
+  toJsx(args) {
+    return `
+            ${jsxCompPreamble(args)}
+            ${RENDERER_RESOLVE_JSX}
+            var _arg = ${jsxVal(args.renderer)};
+            var _target = _friendly.hasOwnProperty(_arg) ? _friendly[_arg] : _arg;
+            if (!_has.hasOwnProperty(_target)) return { ok: false, error: "renderer '" + _target + "' not available — installed: " + _avail.join(", ") };
+            _comp.renderer = _target;
+            return { ok: true, renderer: _comp.renderer, renderers: AE.valueToJson(_avail) };
+        `;
+  },
+});
+
+registerOp({
+  name: "comp.list_renderers",
+  category: "comp",
+  readOnly: true,
+  description:
+    "List the comp's available 3D renderer matchNames, the current one, and the friendly-name mapping used by comp.set_renderer.",
+  params: [{ name: "comp", type: "any", description: "Comp name or id", required: true }],
+  toJsx(args) {
+    return `
+            ${jsxCompPreamble(args)}
+            ${RENDERER_RESOLVE_JSX}
+            return { ok: true, renderer: _comp.renderer, renderers: AE.valueToJson(_avail), friendlyNames: _friendly };
+        `;
+  },
+});
+
 registerOp({
   name: "comp.set_work_area",
   category: "comp",
