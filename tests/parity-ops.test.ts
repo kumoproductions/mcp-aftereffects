@@ -413,7 +413,8 @@ describe("dropdown menu control", () => {
       items: ["Red", "Green", "-", "Custom"],
     });
     expect(jsx).toContain("isDropdownEffect");
-    expect(jsx).toContain('setPropertyParameters(["Red","Green","-","Custom"]'.replace("]'", "]"));
+    expect(jsx).toContain('var _items = ["Red","Green","-","Custom"]');
+    expect(jsx).toContain("setPropertyParameters(_items)");
     expect(jsx).toContain("AE 17.0.1+");
   });
 
