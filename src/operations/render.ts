@@ -71,7 +71,7 @@ registerOp({
   name: "render.set_output",
   category: "render",
   description:
-    "Configure a render-queue item: render-settings template, output-module template, output path, and time span. Discover template names with render.list_templates.",
+    "Configure a render-queue item: render/output templates, output path, time span, render flag, skipFrames, logType, postRenderAction. Discover template names with render.list_templates; raw settings via render.get_settings / render.set_settings.",
   params: [
     {
       name: "queueIndex",
@@ -111,6 +111,42 @@ registerOp({
       required: false,
       default: 1,
     },
+    {
+      name: "render",
+      type: "boolean",
+      description: "Whether this item renders when the queue starts (the Render checkbox)",
+      required: false,
+    },
+    {
+      name: "skipFrames",
+      type: "number",
+      description: "Render every Nth frame (0 = every frame)",
+      required: false,
+    },
+    {
+      name: "logType",
+      type: "string",
+      description: "errorsOnly|errorsAndSettings|errorsAndPerFrameInfo",
+      required: false,
+    },
+    {
+      name: "postRenderAction",
+      type: "string",
+      description: "none|import|importAndReplaceUsage|setProxy (on the output module)",
+      required: false,
+    },
+    {
+      name: "includeSourceXMP",
+      type: "boolean",
+      description: "Embed source-footage XMP metadata in the output",
+      required: false,
+    },
+    {
+      name: "queueItemNotify",
+      type: "boolean",
+      description: "Per-item Notify checkbox (AE 22.0+)",
+      required: false,
+    },
   ],
   toJsx(args) {
     const rqiSets: string[] = [];
@@ -126,6 +162,25 @@ registerOp({
       rqiSets.push(
         `try { _rqi.timeSpanDuration = ${jsxVal(args.timeSpanDuration)}; } catch (eTd) { _w.push("timeSpanDuration: " + AE.errText(eTd)); }`,
       );
+    if (args.render !== undefined)
+      rqiSets.push(
+        `try { _rqi.render = ${jsxVal(args.render)}; } catch (eRf) { _w.push("render: " + AE.errText(eRf)); }`,
+      );
+    if (args.skipFrames !== undefined)
+      rqiSets.push(
+        `try { _rqi.skipFrames = ${jsxVal(args.skipFrames)}; } catch (eSk) { _w.push("skipFrames: " + AE.errText(eSk)); }`,
+      );
+    if (args.logType !== undefined)
+      rqiSets.push(`
+                var _ltMap = { "errorsOnly": LogType.ERRORS_ONLY, "errorsAndSettings": LogType.ERRORS_AND_SETTINGS, "errorsAndPerFrameInfo": LogType.ERRORS_AND_PER_FRAME_INFO };
+                if (_ltMap.hasOwnProperty(${jsxVal(args.logType)})) {
+                    try { _rqi.logType = _ltMap[${jsxVal(args.logType)}]; } catch (eLt) { _w.push("logType: " + AE.errText(eLt)); }
+                } else { _w.push("logType: unknown value " + ${jsxVal(args.logType)}); }
+            `);
+    if (args.queueItemNotify !== undefined)
+      rqiSets.push(
+        `try { _rqi.queueItemNotify = ${jsxVal(args.queueItemNotify)}; } catch (eQn) { _w.push("queueItemNotify (AE 22.0+): " + AE.errText(eQn)); }`,
+      );
     const omSets: string[] = [];
     if (args.outputTemplate !== undefined)
       omSets.push(
@@ -134,6 +189,17 @@ registerOp({
     if (args.outputPath !== undefined)
       omSets.push(
         `try { _om.file = new File(${jsxVal(args.outputPath)}); } catch (eOp) { _w.push("outputPath: " + AE.errText(eOp)); }`,
+      );
+    if (args.postRenderAction !== undefined)
+      omSets.push(`
+                var _praMap = { "none": PostRenderAction.NONE, "import": PostRenderAction.IMPORT, "importAndReplaceUsage": PostRenderAction.IMPORT_AND_REPLACE_USAGE, "setProxy": PostRenderAction.SET_PROXY };
+                if (_praMap.hasOwnProperty(${jsxVal(args.postRenderAction)})) {
+                    try { _om.postRenderAction = _praMap[${jsxVal(args.postRenderAction)}]; } catch (ePa) { _w.push("postRenderAction: " + AE.errText(ePa)); }
+                } else { _w.push("postRenderAction: unknown value " + ${jsxVal(args.postRenderAction)}); }
+            `);
+    if (args.includeSourceXMP !== undefined)
+      omSets.push(
+        `try { _om.includeSourceXMP = ${jsxVal(args.includeSourceXMP)}; } catch (eXm) { _w.push("includeSourceXMP: " + AE.errText(eXm)); }`,
       );
     return `
             var rq = app.project.renderQueue;
@@ -157,6 +223,176 @@ registerOp({
                 outputPath: _om.file ? _om.file.fsName.replace(/\\\\/g, "/") : null,
                 warnings: _w
             };
+        `;
+  },
+});
+
+/** Resolve `_rqi` from an optional queueIndex arg (default: last item). */
+function jsxRqItemPreamble(args: Record<string, unknown>): string {
+  return `
+        var rq = app.project.renderQueue;
+        if (rq.numItems === 0) return { ok: false, error: "render queue is empty" };
+        var _qi = ${jsxVal(args.queueIndex ?? null)};
+        if (_qi === null) _qi = rq.numItems;
+        if (_qi < 1 || _qi > rq.numItems) return { ok: false, error: "queue index out of range (1-" + rq.numItems + ")" };
+        var _rqi = rq.item(_qi);
+    `;
+}
+
+registerOp({
+  name: "render.get_settings",
+  category: "render",
+  readOnly: true,
+  description:
+    "Read the raw render settings of a queue item and the settings of each of its output modules (getSettings, AE 13.0+). format 'settable' returns only keys accepted by render.set_settings / render.set_om_settings.",
+  params: [
+    {
+      name: "queueIndex",
+      type: "number",
+      description: "1-based queue item index (default: last item)",
+      required: false,
+    },
+    {
+      name: "format",
+      type: "string",
+      description: "settable|all (default settable)",
+      required: false,
+      default: "settable",
+    },
+  ],
+  toJsx(args) {
+    return `
+            ${jsxRqItemPreamble(args)}
+            if (typeof _rqi.getSettings !== "function") return { ok: false, error: "getSettings needs AE 13.0+" };
+            var _fmt = ${jsxVal(args.format ?? "settable")} === "all" ? GetSettingsFormat.STRING : GetSettingsFormat.STRING_SETTABLE;
+            var _rs = null;
+            try { _rs = _rqi.getSettings(_fmt); } catch (eRs) { return { ok: false, error: "getSettings failed: " + AE.errText(eRs) }; }
+            var _oms = [];
+            for (var _o = 1; _o <= _rqi.numOutputModules; _o++) {
+                var _om = _rqi.outputModule(_o);
+                var _os = null;
+                try { _os = _om.getSettings(_fmt); } catch (eOs) {}
+                _oms.push({ index: _o, name: AE.safeGet(function () { return _om.name; }, null), settings: _os });
+            }
+            return { ok: true, queueIndex: _qi, comp: _rqi.comp ? _rqi.comp.name : null, renderSettings: _rs, outputModules: _oms };
+        `;
+  },
+});
+
+registerOp({
+  name: "render.set_settings",
+  category: "render",
+  description:
+    'Set raw render settings on a queue item (RenderQueueItem.setSettings, AE 13.0+), e.g. { "Quality": "Best", "Resolution": "Half" }. Discover valid keys/values with render.get_settings.',
+  params: [
+    {
+      name: "queueIndex",
+      type: "number",
+      description: "1-based queue item index (default: last item)",
+      required: false,
+    },
+    {
+      name: "settings",
+      type: "object",
+      description: "Key/value map from render.get_settings format 'settable'",
+      required: true,
+    },
+  ],
+  toJsx(args) {
+    return `
+            ${jsxRqItemPreamble(args)}
+            if (typeof _rqi.setSettings !== "function") return { ok: false, error: "setSettings needs AE 13.0+" };
+            try { _rqi.setSettings(${jsxVal(args.settings)}); } catch (eSs) { return { ok: false, error: "setSettings failed: " + AE.errText(eSs) }; }
+            var _after = null;
+            try { _after = _rqi.getSettings(GetSettingsFormat.STRING_SETTABLE); } catch (eAf) {}
+            return { ok: true, queueIndex: _qi, renderSettings: _after };
+        `;
+  },
+});
+
+registerOp({
+  name: "render.set_om_settings",
+  category: "render",
+  description:
+    'Set raw output-module settings on a queue item (OutputModule.setSettings, AE 13.0+), e.g. { "Format": "QuickTime", "Channels": "RGB + Alpha" }. Discover valid keys/values with render.get_settings.',
+  params: [
+    {
+      name: "queueIndex",
+      type: "number",
+      description: "1-based queue item index (default: last item)",
+      required: false,
+    },
+    {
+      name: "outputModuleIndex",
+      type: "number",
+      description: "1-based output module index (default 1)",
+      required: false,
+      default: 1,
+    },
+    {
+      name: "settings",
+      type: "object",
+      description: "Key/value map from render.get_settings format 'settable'",
+      required: true,
+    },
+  ],
+  toJsx(args) {
+    return `
+            ${jsxRqItemPreamble(args)}
+            var _om = null;
+            try { _om = _rqi.outputModule(${jsxVal(args.outputModuleIndex ?? 1)}); } catch (eOm) {}
+            if (!_om) return { ok: false, error: "no output module at index " + ${jsxVal(args.outputModuleIndex ?? 1)} };
+            if (typeof _om.setSettings !== "function") return { ok: false, error: "setSettings needs AE 13.0+" };
+            try { _om.setSettings(${jsxVal(args.settings)}); } catch (eSs) { return { ok: false, error: "setSettings failed: " + AE.errText(eSs) }; }
+            var _after = null;
+            try { _after = _om.getSettings(GetSettingsFormat.STRING_SETTABLE); } catch (eAf) {}
+            return { ok: true, queueIndex: _qi, outputModuleIndex: ${jsxVal(args.outputModuleIndex ?? 1)}, settings: _after };
+        `;
+  },
+});
+
+registerOp({
+  name: "render.remove_item",
+  category: "render",
+  description:
+    "Remove ONE item from the render queue by its 1-based index (render.clear_queue removes all).",
+  params: [
+    {
+      name: "queueIndex",
+      type: "number",
+      description: "1-based queue item index (explicit — no default for a destructive op)",
+      required: true,
+    },
+  ],
+  toJsx(args) {
+    return `
+            ${jsxRqItemPreamble(args)}
+            var _compName = _rqi.comp ? _rqi.comp.name : null;
+            _rqi.remove();
+            return { ok: true, removed: _compName, remaining: rq.numItems };
+        `;
+  },
+});
+
+registerOp({
+  name: "render.duplicate_item",
+  category: "render",
+  description:
+    "Duplicate a render-queue item (RenderQueueItem.duplicate) — e.g. to render the same comp with a second settings/output combination.",
+  params: [
+    {
+      name: "queueIndex",
+      type: "number",
+      description: "1-based queue item index (default: last item)",
+      required: false,
+    },
+  ],
+  toJsx(args) {
+    return `
+            ${jsxRqItemPreamble(args)}
+            var _dup = null;
+            try { _dup = _rqi.duplicate(); } catch (eDp) { return { ok: false, error: "duplicate failed: " + AE.errText(eDp) }; }
+            return { ok: true, comp: _dup.comp ? _dup.comp.name : null, numItems: rq.numItems };
         `;
   },
 });
