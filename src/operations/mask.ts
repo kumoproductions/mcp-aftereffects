@@ -76,7 +76,8 @@ registerOp({
     {
       name: "featherRadii",
       type: "array",
-      description: "Variable-width feather: radius in px per point (negative = inner feather)",
+      description:
+        "Variable-width feather: radius in px per point. Sign must match featherTypes: outer points (type 0) need radius >= 0, inner points (type 1) need radius <= 0 — AE rejects mismatches",
       required: false,
     },
     {

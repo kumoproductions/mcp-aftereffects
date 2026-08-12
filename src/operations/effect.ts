@@ -218,7 +218,7 @@ registerOp({
   name: "effect.set_dropdown_items",
   category: "effect",
   description:
-    'Set the menu items of a Dropdown Menu Control effect (Property.setPropertyParameters, AE 17.0.1+) — the key API for MOGRT dropdowns. Item strings must be unique; "-" inserts a separator. NOTE: AE re-creates the control, invalidating prior references to it.',
+    'Set the menu items of a Dropdown Menu Control effect (Property.setPropertyParameters, AE 17.0.1+) — the key API for MOGRT dropdowns. Item strings must be unique; "-" inserts a separator. AE re-creates the control (references from earlier calls become invalid); this op preserves the effect\'s display name across that re-creation.',
   params: [
     { name: "comp", type: "any", description: "Comp name or id", required: true },
     {
@@ -246,11 +246,31 @@ registerOp({
             var _fxArg = ${jsxVal(args.effect)};
             ${DROPDOWN_MENU_LOOKUP_JSX}
             var _items = ${jsxVal(args.items)};
-            var _newMenu = null;
-            try { _newMenu = _menu.setPropertyParameters(_items); } catch (eSp) { return { ok: false, error: "setPropertyParameters failed: " + AE.errText(eSp) }; }
+            // setPropertyParameters RE-CREATES the control: afterwards _eff and
+            // _menu are invalid (any member access throws "Object is invalid")
+            // and the display name resets to the default. Capture identity
+            // first, re-resolve by index after, and put the caller's name back.
+            var _prevName = _eff.name;
+            var _effIndex = _eff.propertyIndex;
+            try { _menu.setPropertyParameters(_items); } catch (eSp) { return { ok: false, error: "setPropertyParameters failed: " + AE.errText(eSp) }; }
+            var _eff2 = null;
+            try { _eff2 = _fx.property(_effIndex); } catch (eRf) {}
+            if (_eff2 !== null && _eff2.name !== _prevName) {
+                try { _eff2.name = _prevName; } catch (eNm) {}
+            }
             var _read = null;
-            try { _read = AE.valueToJson((_newMenu || _menu).propertyParameters); } catch (ePp) {}
-            return { ok: true, effect: _eff.name, itemCount: _items.length, propertyParameters: _read };
+            if (_eff2 !== null) {
+                for (var _mi2 = 1; _mi2 <= _eff2.numProperties; _mi2++) {
+                    var _cand2 = _eff2.property(_mi2);
+                    var _isDd2 = false;
+                    try { _isDd2 = (_cand2.isDropdownEffect === true); } catch (eDd2) {}
+                    if (_isDd2) {
+                        try { _read = AE.valueToJson(_cand2.propertyParameters); } catch (ePp) {}
+                        break;
+                    }
+                }
+            }
+            return { ok: true, effect: _prevName, itemCount: _items.length, propertyParameters: _read };
         `;
   },
 });
