@@ -61,8 +61,77 @@ registerOp({
       required: false,
       default: true,
     },
+    {
+      name: "featherSegLocs",
+      type: "array",
+      description: "Variable-width feather: 0-based segment index per feather point",
+      required: false,
+    },
+    {
+      name: "featherRelSegLocs",
+      type: "array",
+      description: "Variable-width feather: relative position (0-1) on the segment, per point",
+      required: false,
+    },
+    {
+      name: "featherRadii",
+      type: "array",
+      description: "Variable-width feather: radius in px per point (negative = inner feather)",
+      required: false,
+    },
+    {
+      name: "featherInterps",
+      type: "array",
+      description: "Variable-width feather: 0=smooth, 1=hold, per point (default all 0)",
+      required: false,
+    },
+    {
+      name: "featherTensions",
+      type: "array",
+      description: "Variable-width feather: tension 0-1 per point (default all 0)",
+      required: false,
+    },
+    {
+      name: "featherTypes",
+      type: "array",
+      description: "Variable-width feather: 0=outer, 1=inner, per point (default all 0)",
+      required: false,
+    },
+    {
+      name: "featherRelCornerAngles",
+      type: "array",
+      description: "Variable-width feather: relative corner angle % per point (default all 0)",
+      required: false,
+    },
   ],
   toJsx(args) {
+    // The three feather-point arrays travel together; AE rejects a Shape whose
+    // feather arrays disagree in length, so pad the optional ones to match.
+    // Hoisted out of the main template: the lint's template scanner cannot see
+    // through raw braces inside a `${…}` interpolation.
+    const featherJsx =
+      args.featherSegLocs === undefined
+        ? ""
+        : `
+            var _fSeg = ${jsxVal(args.featherSegLocs)};
+            var _fRel = ${jsxVal(args.featherRelSegLocs)};
+            var _fRad = ${jsxVal(args.featherRadii)};
+            if (!_fRel || !_fRad || _fSeg.length !== _fRel.length || _fSeg.length !== _fRad.length) {
+                return { ok: false, error: "featherSegLocs, featherRelSegLocs and featherRadii must all be present with the same length" };
+            }
+            function _padded(arr, n) {
+                var out = [];
+                for (var _fi = 0; _fi < n; _fi++) out.push(arr && _fi < arr.length ? arr[_fi] : 0);
+                return out;
+            }
+            _shape.featherSegLocs = _fSeg;
+            _shape.featherRelSegLocs = _fRel;
+            _shape.featherRadii = _fRad;
+            _shape.featherInterps = _padded(${jsxVal(args.featherInterps)}, _fSeg.length);
+            _shape.featherTensions = _padded(${jsxVal(args.featherTensions)}, _fSeg.length);
+            _shape.featherTypes = _padded(${jsxVal(args.featherTypes)}, _fSeg.length);
+            _shape.featherRelCornerAngles = _padded(${jsxVal(args.featherRelCornerAngles)}, _fSeg.length);
+        `;
     return `
             ${jsxCompLayerPreamble(args)}
             var _mask = _layer.property("Masks").property(${jsxVal(args.maskIndex)});
@@ -72,6 +141,7 @@ registerOp({
             _shape.closed = ${jsxVal(args.closed !== false)};
             ${args.inTangents ? `_shape.inTangents = ${jsxVal(args.inTangents)};` : ""}
             ${args.outTangents ? `_shape.outTangents = ${jsxVal(args.outTangents)};` : ""}
+            ${featherJsx}
             _mask.property("ADBE Mask Shape").setValue(_shape);
             return { ok: true, maskIndex: ${jsxVal(args.maskIndex)} };
         `;
@@ -81,7 +151,8 @@ registerOp({
 registerOp({
   name: "mask.set_props",
   category: "mask",
-  description: "Set mask properties: mode, feather, opacity, expansion.",
+  description:
+    "Set mask properties: mode, feather, opacity, expansion, inverted, locked, color, rotoBezier, motionBlur, featherFalloff.",
   params: [
     { name: "comp", type: "any", description: "Comp name or id", required: true },
     {
@@ -100,6 +171,37 @@ registerOp({
     { name: "feather", type: "array", description: "[x,y] feather in px", required: false },
     { name: "opacity", type: "number", description: "Mask opacity 0-100", required: false },
     { name: "expansion", type: "number", description: "Mask expansion in px", required: false },
+    { name: "inverted", type: "boolean", description: "Invert the mask", required: false },
+    {
+      name: "locked",
+      type: "boolean",
+      description: "Lock the mask against UI editing",
+      required: false,
+    },
+    {
+      name: "color",
+      type: "array",
+      description: "[r,g,b] 0-1 mask outline color in the UI",
+      required: false,
+    },
+    {
+      name: "rotoBezier",
+      type: "boolean",
+      description: "Treat the path as a RotoBezier (tangents auto-computed)",
+      required: false,
+    },
+    {
+      name: "motionBlur",
+      type: "string",
+      description: "sameAsLayer|on|off (per-mask motion blur)",
+      required: false,
+    },
+    {
+      name: "featherFalloff",
+      type: "string",
+      description: "smooth|linear (feather falloff)",
+      required: false,
+    },
   ],
   toJsx(args) {
     const sets: string[] = [];
@@ -121,12 +223,48 @@ registerOp({
       sets.push(
         `try { _mask.property("ADBE Mask Offset").setValue(${jsxVal(args.expansion)}); } catch(e) {}`,
       );
+    // MaskPropertyGroup attributes (not child properties). Each set is
+    // reported on failure instead of silently swallowed — these have no
+    // second observable channel the caller could check.
+    if (args.inverted !== undefined)
+      sets.push(
+        `try { _mask.inverted = ${jsxVal(args.inverted)}; } catch(e) { _w.push("inverted: " + AE.errText(e)); }`,
+      );
+    if (args.locked !== undefined)
+      sets.push(
+        `try { _mask.locked = ${jsxVal(args.locked)}; } catch(e) { _w.push("locked: " + AE.errText(e)); }`,
+      );
+    if (args.color !== undefined)
+      sets.push(
+        `try { _mask.color = ${jsxVal(args.color)}; } catch(e) { _w.push("color: " + AE.errText(e)); }`,
+      );
+    if (args.rotoBezier !== undefined)
+      sets.push(
+        `try { _mask.rotoBezier = ${jsxVal(args.rotoBezier)}; } catch(e) { _w.push("rotoBezier: " + AE.errText(e)); }`,
+      );
+    if (args.motionBlur !== undefined) {
+      sets.push(`
+                var _mbMap = { "sameAsLayer": MaskMotionBlur.SAME_AS_LAYER, "on": MaskMotionBlur.ON, "off": MaskMotionBlur.OFF };
+                if (_mbMap.hasOwnProperty(${jsxVal(args.motionBlur)})) {
+                    try { _mask.maskMotionBlur = _mbMap[${jsxVal(args.motionBlur)}]; } catch(e) { _w.push("motionBlur: " + AE.errText(e)); }
+                } else { _w.push("motionBlur: unknown value " + ${jsxVal(args.motionBlur)}); }
+            `);
+    }
+    if (args.featherFalloff !== undefined) {
+      sets.push(`
+                var _ffMap = { "smooth": MaskFeatherFalloff.FFO_SMOOTH, "linear": MaskFeatherFalloff.FFO_LINEAR };
+                if (_ffMap.hasOwnProperty(${jsxVal(args.featherFalloff)})) {
+                    try { _mask.maskFeatherFalloff = _ffMap[${jsxVal(args.featherFalloff)}]; } catch(e) { _w.push("featherFalloff: " + AE.errText(e)); }
+                } else { _w.push("featherFalloff: unknown value " + ${jsxVal(args.featherFalloff)}); }
+            `);
+    }
     return `
             ${jsxCompLayerPreamble(args)}
             var _mask = _layer.property("Masks").property(${jsxVal(args.maskIndex)});
             if (!_mask) return { ok: false, error: "no mask at index " + ${jsxVal(args.maskIndex)} };
+            var _w = [];
             ${sets.join("\n")}
-            return { ok: true, maskIndex: ${jsxVal(args.maskIndex)} };
+            return { ok: true, maskIndex: ${jsxVal(args.maskIndex)}, warnings: _w };
         `;
   },
 });
