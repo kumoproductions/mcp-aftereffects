@@ -43,6 +43,76 @@ function jsxMarkerKeyLookup(args: Record<string, unknown>): string {
     `;
 }
 
+/**
+ * Optional MarkerValue field assignments shared by the add and update ops.
+ * Generated code expects `_mv` (the MarkerValue) and `_w` (warnings array).
+ */
+function jsxMarkerFieldSets(args: Record<string, unknown>): string {
+  const sets: string[] = [];
+  if (args.label !== undefined) sets.push(`_mv.label = ${jsxVal(args.label)};`);
+  if (args.duration !== undefined) sets.push(`_mv.duration = ${jsxVal(args.duration)};`);
+  if (args.chapter !== undefined) sets.push(`_mv.chapter = ${jsxVal(args.chapter)};`);
+  if (args.url !== undefined) sets.push(`_mv.url = ${jsxVal(args.url)};`);
+  if (args.frameTarget !== undefined) sets.push(`_mv.frameTarget = ${jsxVal(args.frameTarget)};`);
+  if (args.cuePointName !== undefined)
+    sets.push(`_mv.cuePointName = ${jsxVal(args.cuePointName)};`);
+  if (args.eventCuePoint !== undefined)
+    sets.push(`_mv.eventCuePoint = ${jsxVal(args.eventCuePoint)};`);
+  if (args.params !== undefined) {
+    sets.push(`
+            try {
+                var _prm = ${jsxVal(args.params)};
+                var _prmStr = {};
+                for (var _pk in _prm) { if (_prm.hasOwnProperty(_pk)) _prmStr[_pk] = String(_prm[_pk]); }
+                _mv.setParameters(_prmStr);
+            } catch (ePrm) { _w.push("params: " + AE.errText(ePrm)); }
+        `);
+  }
+  if (args.protectedRegion !== undefined)
+    sets.push(
+      `try { _mv.protectedRegion = ${jsxVal(args.protectedRegion)}; } catch (ePr) { _w.push("protectedRegion: " + AE.errText(ePr)); }`,
+    );
+  return sets.join("\n");
+}
+
+/** Marker fields shared by add_comp / add_layer / update. */
+const MARKER_FIELD_PARAMS = [
+  { name: "label", type: "number", description: "Label color index (0-16)", required: false },
+  { name: "duration", type: "number", description: "Marker duration in seconds", required: false },
+  { name: "chapter", type: "string", description: "Chapter link text", required: false },
+  { name: "url", type: "string", description: "Web link URL", required: false },
+  {
+    name: "frameTarget",
+    type: "string",
+    description: "Web link frame target (used with url)",
+    required: false,
+  },
+  {
+    name: "cuePointName",
+    type: "string",
+    description: "Flash Video cue point name",
+    required: false,
+  },
+  {
+    name: "eventCuePoint",
+    type: "boolean",
+    description: "true = event cue point, false = navigation cue point",
+    required: false,
+  },
+  {
+    name: "params",
+    type: "object",
+    description: 'Cue point key/value parameters, e.g. { "speaker": "A" } (values stringified)',
+    required: false,
+  },
+  {
+    name: "protectedRegion",
+    type: "boolean",
+    description: "Protected-region flag (comp markers only)",
+    required: false,
+  },
+] as const;
+
 registerOp({
   name: "marker.add_comp",
   category: "marker",
@@ -57,22 +127,16 @@ registerOp({
       required: false,
       default: "",
     },
-    { name: "label", type: "number", description: "Label color index (0-16)", required: false },
-    {
-      name: "duration",
-      type: "number",
-      description: "Marker duration in seconds",
-      required: false,
-    },
+    ...MARKER_FIELD_PARAMS,
   ],
   toJsx(args) {
     return `
             ${jsxCompPreamble(args)}
             var _mv = new MarkerValue(${jsxVal(args.comment ?? "")});
-            ${args.label !== undefined ? `_mv.label = ${jsxVal(args.label)};` : ""}
-            ${args.duration !== undefined ? `_mv.duration = ${jsxVal(args.duration)};` : ""}
+            var _w = [];
+            ${jsxMarkerFieldSets(args)}
             _comp.markerProperty.setValueAtTime(${jsxVal(args.time)}, _mv);
-            return { ok: true, numMarkers: _comp.markerProperty.numKeys };
+            return { ok: true, numMarkers: _comp.markerProperty.numKeys, warnings: _w };
         `;
   },
 });
@@ -97,22 +161,16 @@ registerOp({
       required: false,
       default: "",
     },
-    { name: "label", type: "number", description: "Label color index (0-16)", required: false },
-    {
-      name: "duration",
-      type: "number",
-      description: "Marker duration in seconds",
-      required: false,
-    },
+    ...MARKER_FIELD_PARAMS,
   ],
   toJsx(args) {
     return `
             ${jsxCompLayerPreamble(args)}
             var _mv = new MarkerValue(${jsxVal(args.comment ?? "")});
-            ${args.label !== undefined ? `_mv.label = ${jsxVal(args.label)};` : ""}
-            ${args.duration !== undefined ? `_mv.duration = ${jsxVal(args.duration)};` : ""}
+            var _w = [];
+            ${jsxMarkerFieldSets(args)}
             _layer.property("Marker").setValueAtTime(${jsxVal(args.time)}, _mv);
-            return { ok: true, numMarkers: _layer.property("Marker").numKeys };
+            return { ok: true, numMarkers: _layer.property("Marker").numKeys, warnings: _w };
         `;
   },
 });
@@ -170,34 +228,17 @@ registerOp({
       required: false,
     },
     { name: "comment", type: "string", description: "New comment", required: false },
-    { name: "label", type: "number", description: "Label color index (0-16)", required: false },
-    { name: "duration", type: "number", description: "Duration in seconds", required: false },
-    { name: "chapter", type: "string", description: "Chapter link text", required: false },
-    { name: "url", type: "string", description: "Web link URL", required: false },
-    {
-      name: "protectedRegion",
-      type: "boolean",
-      description: "Protected-region flag (comp markers only)",
-      required: false,
-    },
+    ...MARKER_FIELD_PARAMS,
   ],
   toJsx(args) {
-    const sets: string[] = [];
-    if (args.comment !== undefined) sets.push(`_mv.comment = ${jsxVal(args.comment)};`);
-    if (args.label !== undefined) sets.push(`_mv.label = ${jsxVal(args.label)};`);
-    if (args.duration !== undefined) sets.push(`_mv.duration = ${jsxVal(args.duration)};`);
-    if (args.chapter !== undefined) sets.push(`_mv.chapter = ${jsxVal(args.chapter)};`);
-    if (args.url !== undefined) sets.push(`_mv.url = ${jsxVal(args.url)};`);
-    if (args.protectedRegion !== undefined)
-      sets.push(
-        `try { _mv.protectedRegion = ${jsxVal(args.protectedRegion)}; } catch (ePr) { _w.push("protectedRegion: " + AE.errText(ePr)); }`,
-      );
+    const commentSet = args.comment !== undefined ? `_mv.comment = ${jsxVal(args.comment)};` : "";
     return `
             ${jsxMarkerPreamble(args)}
             ${jsxMarkerKeyLookup(args)}
             var _mv = _mp.keyValue(_ki);
             var _w = [];
-            ${sets.join("\n")}
+            ${commentSet}
+            ${jsxMarkerFieldSets(args)}
             _mp.setValueAtKey(_ki, _mv);
             return { ok: true, keyIndex: _ki, time: _mp.keyTime(_ki), warnings: _w };
         `;
@@ -232,6 +273,10 @@ registerOp({
                     label: AE.safeGet(function () { return _v.label; }, 0),
                     chapter: AE.safeGet(function () { return _v.chapter; }, ""),
                     url: AE.safeGet(function () { return _v.url; }, ""),
+                    frameTarget: AE.safeGet(function () { return _v.frameTarget; }, ""),
+                    cuePointName: AE.safeGet(function () { return _v.cuePointName; }, ""),
+                    eventCuePoint: AE.safeGet(function () { return _v.eventCuePoint; }, false),
+                    params: AE.safeGet(function () { return _v.getParameters(); }, {}),
                     protectedRegion: AE.safeGet(function () { return _v.protectedRegion; }, false)
                 });
             }
