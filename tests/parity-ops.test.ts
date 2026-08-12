@@ -618,6 +618,158 @@ describe("small parity ops", () => {
   });
 });
 
+describe("low-priority parity ops", () => {
+  it("project.set_settings maps the remaining display/color enums", () => {
+    const jsx = getOp("project.set_settings")!.toJsx({
+      linearizeWorkingSpace: true,
+      compensateForSceneReferredProfiles: false,
+      displayStartFrame: 1,
+      feetFramesFilmType: "mm16",
+      footageTimecodeDisplayStartType: "useSourceMedia",
+    });
+    expect(jsx).toContain("linearizeWorkingSpace = true");
+    expect(jsx).toContain("FeetFramesFilmType.MM16");
+    expect(jsx).toContain("FootageTimecodeDisplayStartType.FTCS_USE_SOURCE_MEDIA");
+    expect(jsx).toContain("displayStartFrame = 1");
+  });
+
+  it("project.set_tool resolves friendly names via the probe-built table", () => {
+    const jsx = getOp("project.set_tool")!.toJsx({ tool: "cameraOrbitCursor" });
+    expect(jsx).toContain('_addTool("cameraOrbitCursor", "Tool_CameraOrbitCursor")');
+    expect(jsx).toContain("unknown tool");
+    expect(getOp("project.get_tool")!.readOnly).toBe(true);
+  });
+
+  it("project memory/MFR ops guard their APIs", () => {
+    expect(
+      getOp("project.set_memory_limits")!.toJsx({ imageCachePercent: 50, maxMemoryPercent: 80 }),
+    ).toContain("setMemoryUsageLimits(50, 80)");
+    const mfr = getOp("project.set_multi_frame_rendering")!.toJsx({ enabled: true });
+    expect(mfr).toContain("setMultiFrameRenderingConfig(true, 90)");
+    expect(mfr).toContain("AE 22.0+");
+  });
+
+  it("pref ops type the value path and validate prefType", () => {
+    const get = getOp("pref.get")!.toJsx({ section: "S", key: "K", type: "bool" });
+    expect(get).toContain("getPrefAsBool");
+    expect(get).toContain("havePref");
+    const set = getOp("pref.set")!.toJsx({
+      section: "S",
+      key: "K",
+      value: 1.5,
+      prefType: "machineIndependent",
+    });
+    expect(set).toContain("PREF_Type_MACHINE_INDEPENDENT");
+    expect(set).toContain("saveToDisk");
+    const noPersist = getOp("pref.set")!.toJsx({
+      section: "S",
+      key: "K",
+      value: "x",
+      persist: false,
+    });
+    expect(noPersist).not.toContain("saveToDisk");
+    expect(getOp("pref.delete")!.toJsx({ section: "S", key: "K" })).toContain("deletePref");
+    expect(getOp("pref.get_setting")!.readOnly).toBe(true);
+    expect(getOp("pref.set_setting")!.toJsx({ section: "S", key: "K", value: "v" })).toContain(
+      "saveSetting",
+    );
+  });
+
+  it("font management ops guard their 24.6/25.1 APIs", () => {
+    expect(getOp("font.list_duplicates")!.toJsx({})).toContain("fontsDuplicateByPostScriptName");
+    expect(getOp("font.get_lists")!.toJsx({})).toContain("mruFontFamilyList");
+    expect(getOp("font.set_favorites")!.toJsx({ families: ["Inter"] })).toContain(
+      'favoriteFontFamilyList = ["Inter"]',
+    );
+    const sub = getOp("font.set_substitution")!.toJsx({ matchPolicy: "ctfiEqual" });
+    expect(sub).toContain("SubstitutedFontReplacementMatchPolicy.CTFI_EQUAL");
+    const script = getOp("font.set_default_for_script")!.toJsx({
+      script: "japanese",
+      postScriptName: "NotoSansJP-Regular",
+    });
+    expect(script).toContain('_addScript("japanese", "CT_JAPANESE_SCRIPT")');
+    expect(script).toContain("setDefaultFontForCTScript");
+  });
+
+  it("text.paste_range wires source and target ranges through pasteFrom", () => {
+    const jsx = getOp("text.paste_range")!.toJsx({
+      comp: "Main",
+      layer: "b",
+      start: 0,
+      sourceLayer: "a",
+      sourceStart: 2,
+      sourceEnd: 5,
+    });
+    expect(jsx).toContain("pasteFrom(_src)");
+    expect(jsx).toContain("AE 25.1+");
+  });
+
+  it("text.reset_style scopes to character, paragraph, or both", () => {
+    const jsx = getOp("text.reset_style")!.toJsx({ comp: "Main", layer: 1, scope: "character" });
+    expect(jsx).toContain("resetCharStyle");
+    expect(jsx).toContain("resetParagraphStyle");
+  });
+
+  it("keyframe.set_selected handles single keys and 'all'", () => {
+    const jsx = getOp("keyframe.set_selected")!.toJsx({
+      comp: "Main",
+      layer: 1,
+      property: ["Transform", "Position"],
+      keyIndex: "all",
+      selected: true,
+    });
+    expect(jsx).toContain("setSelectedAtKey");
+    expect(jsx).toContain("selectedKeys");
+  });
+
+  it("property.select flips PropertyBase.selected", () => {
+    expect(
+      getOp("property.select")!.toJsx({ comp: "Main", layer: 1, property: ["Effects"] }),
+    ).toContain("_node.selected = true");
+  });
+
+  it("render.save_template targets item or output module", () => {
+    const rs = getOp("render.save_template")!.toJsx({ type: "render", name: "MCP Draft" });
+    expect(rs).toContain('saveAsTemplate("MCP Draft")');
+    const om = getOp("render.save_template")!.toJsx({
+      type: "output",
+      name: "MCP PNG",
+      outputModuleIndex: 2,
+    });
+    expect(om).toContain("outputModule(2)");
+  });
+
+  it("layer.calculate_transform applies only when asked", () => {
+    const dry = getOp("layer.calculate_transform")!.toJsx({
+      comp: "Main",
+      layer: 1,
+      topLeft: [0, 0, 0],
+      topRight: [100, 0, 0],
+      bottomLeft: [0, 100, 0],
+    });
+    expect(dry).toContain("calculateTransformFromPoints([0,0,0], [100,0,0], [0,100,0])");
+    expect(dry).not.toContain("_setXf");
+    const wet = getOp("layer.calculate_transform")!.toJsx({
+      comp: "Main",
+      layer: 1,
+      topLeft: [0, 0, 0],
+      topRight: [100, 0, 0],
+      bottomLeft: [0, 100, 0],
+      apply: true,
+    });
+    expect(wet).toContain('_setXf("X Rotation"');
+  });
+
+  it("egp.open_in_panel and render queueNotify exist", () => {
+    expect(getOp("egp.open_in_panel")!.toJsx({ comp: "Main" })).toContain(
+      "openInEssentialGraphics",
+    );
+    expect(getOp("render.set_output")!.toJsx({ queueNotify: true })).toContain(
+      "rq.queueNotify = true",
+    );
+  });
+});
+
 describe("layer.set_props enum coercion", () => {
   it("routes every assignment through AE.coerceLayerPropValue", () => {
     const op = getOp("layer.set_props");

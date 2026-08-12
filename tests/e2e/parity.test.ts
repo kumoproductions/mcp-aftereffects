@@ -846,3 +846,217 @@ describe("e2e: egp / viewer / project / shape", () => {
     expect(after.layers, "one undo must revert the whole batch").toHaveLength(0);
   });
 });
+
+// Self-contained: runs after the project boundary above, in the empty project
+// project.new left behind. Ops that would permanently pollute the user's AE
+// (render templates, memory limits) exercise their guard paths only.
+describe("e2e: low-priority parity ops", () => {
+  const LP = "lowpri_comp";
+
+  it("project settings round-trip the new display/color fields", async (ctx) => {
+    if (!ready) return ctx.skip();
+    const got = await o().run<{ feetFramesFilmType: string; displayStartFrame: number }>(
+      "project.get_settings",
+      {},
+    );
+    expect(["mm16", "mm35"]).toContain(got.feetFramesFilmType);
+    // Write the current values back — exercises the setters without changing anything.
+    const set = await o().run<{ warnings: string[] }>("project.set_settings", {
+      feetFramesFilmType: got.feetFramesFilmType,
+      displayStartFrame: got.displayStartFrame,
+      linearizeWorkingSpace: false,
+      compensateForSceneReferredProfiles: false,
+      footageTimecodeDisplayStartType: "useSourceMedia",
+    });
+    expect(set.warnings).toEqual([]);
+  });
+
+  it("project.set_tool activates the selection tool", async (ctx) => {
+    if (!ready) return ctx.skip();
+    const set = await o().run<{ tool: string }>("project.set_tool", { tool: "selection" });
+    expect(set.tool).toBe("selection");
+    const got = await o().run<{ tool: string }>("project.get_tool", {});
+    expect(got.tool).toBe("selection");
+  });
+
+  it("project.set_multi_frame_rendering accepts the default config", async (ctx) => {
+    if (!ready) return ctx.skip();
+    const res = await o().run<{ enabled: boolean }>("project.set_multi_frame_rendering", {
+      enabled: true,
+      maxCpuPercent: 90,
+    });
+    expect(res.enabled).toBe(true);
+  });
+
+  it("project.set_default_import_folder points at the scratch dir", async (ctx) => {
+    if (!ready) return ctx.skip();
+    const res = await o().run<{ set: boolean }>("project.set_default_import_folder", {
+      path: E2E_SCRATCH_DIR,
+    });
+    expect(res.set).toBe(true);
+  });
+
+  it("pref.set / get / delete round-trip in an MCP-owned section", async (ctx) => {
+    if (!ready) return ctx.skip();
+    const SEC = "MCP AE E2E Section";
+    await o().run("pref.set", { section: SEC, key: "flag", value: true });
+    await o().run("pref.set", { section: SEC, key: "ratio", value: 1.5, type: "float" });
+    const flag = await o().run<{ exists: boolean; value: boolean }>("pref.get", {
+      section: SEC,
+      key: "flag",
+      type: "bool",
+    });
+    expect(flag.exists).toBe(true);
+    expect(flag.value).toBe(true);
+    const ratio = await o().run<{ value: number }>("pref.get", {
+      section: SEC,
+      key: "ratio",
+      type: "float",
+    });
+    expect(ratio.value).toBeCloseTo(1.5);
+    const del = await o().run<{ deleted: boolean }>("pref.delete", { section: SEC, key: "flag" });
+    expect(del.deleted).toBe(true);
+    await o().run("pref.delete", { section: SEC, key: "ratio" });
+    const gone = await o().run<{ exists: boolean }>("pref.get", {
+      section: SEC,
+      key: "flag",
+      type: "bool",
+    });
+    expect(gone.exists).toBe(false);
+  });
+
+  it("pref.set_setting / get_setting round-trip", async (ctx) => {
+    if (!ready) return ctx.skip();
+    await o().run("pref.set_setting", { section: "MCP AE E2E", key: "marker", value: "on" });
+    const got = await o().run<{ exists: boolean; value: string }>("pref.get_setting", {
+      section: "MCP AE E2E",
+      key: "marker",
+    });
+    expect(got.exists).toBe(true);
+    expect(got.value).toBe("on");
+  });
+
+  it("font management reads work; writes round-trip current values", async (ctx) => {
+    if (!ready) return ctx.skip();
+    const dups = await o().run<{ count: number }>("font.list_duplicates", {});
+    expect(dups.count).toBeGreaterThanOrEqual(0);
+    const lists = await o().run<{ favorites: string[] | null }>("font.get_lists", {});
+    if (lists.favorites) {
+      const setFav = await o().run<{ favorites: string[] }>("font.set_favorites", {
+        families: lists.favorites,
+      });
+      expect(setFav.favorites).toEqual(lists.favorites);
+    }
+    const roman = await o().run<{ font: { postScriptName: string } | null }>(
+      "font.get_default_for_script",
+      { script: "roman" },
+    );
+    if (roman.font?.postScriptName) {
+      const setBack = await o().run<{ font: string }>("font.set_default_for_script", {
+        script: "roman",
+        postScriptName: roman.font.postScriptName,
+      });
+      expect(setBack.font).toBe(roman.font.postScriptName);
+    }
+    const sub = await o().run<{ warnings: string[] }>("font.set_substitution", {
+      freezeSync: false,
+    });
+    expect(sub.warnings).toEqual([]);
+  });
+
+  it("text.paste_range copies text+style across layers; reset_style clears overrides", async (ctx) => {
+    if (!ready) return ctx.skip();
+    await o().run("comp.create", { name: LP, width: 500, height: 500, fps: 30, duration: 5 });
+    await o().run("layer.create_text", { comp: LP, text: "SOURCE", name: "src_text" });
+    await o().run("text.set_style", { comp: LP, layer: "src_text", fillColor: [1, 0, 0] });
+    await o().run("layer.create_text", { comp: LP, text: "destination", name: "dst_text" });
+    const pasted = await o().run<{ text: string }>("text.paste_range", {
+      comp: LP,
+      layer: "dst_text",
+      start: 0,
+      end: 4,
+      sourceLayer: "src_text",
+      sourceStart: 0,
+      sourceEnd: 6,
+    });
+    expect(pasted.text.startsWith("SOURCE")).toBe(true);
+    const reset = await o().run<{ warnings: string[] }>("text.reset_style", {
+      comp: LP,
+      layer: "dst_text",
+      scope: "both",
+    });
+    expect(reset.warnings).toEqual([]);
+  });
+
+  it("keyframe.set_selected and property.select stage timeline selection", async (ctx) => {
+    if (!ready) return ctx.skip();
+    await o().run("layer.create_solid", { comp: LP, name: "sel_solid", color: [0, 0, 1] });
+    for (const [t, v] of [
+      [0, 0],
+      [1, 100],
+    ] as const) {
+      await o().run("keyframe.add", {
+        comp: LP,
+        layer: "sel_solid",
+        property: ["Transform", "Opacity"],
+        time: t,
+        value: v,
+      });
+    }
+    const sel = await o().run<{ touched: number; selectedKeys: number[] }>(
+      "keyframe.set_selected",
+      {
+        comp: LP,
+        layer: "sel_solid",
+        property: ["Transform", "Opacity"],
+        keyIndex: "all",
+        selected: true,
+      },
+    );
+    expect(sel.touched).toBe(2);
+    expect(sel.selectedKeys).toHaveLength(2);
+    const prop = await o().run<{ selected: boolean }>("property.select", {
+      comp: LP,
+      layer: "sel_solid",
+      property: ["Transform", "Opacity"],
+    });
+    expect(prop.selected).toBe(true);
+  });
+
+  it("layer.calculate_transform solves and applies a corner placement", async (ctx) => {
+    if (!ready) return ctx.skip();
+    await o().run("layer.create_solid", { comp: LP, name: "ct_solid", color: [1, 1, 1] });
+    await o().run("layer.set_props", { comp: LP, layer: "ct_solid", props: { threeDLayer: true } });
+    const res = await o().run<{
+      transform: { scale: number[]; position: number[] };
+      applied: boolean;
+      warnings: string[];
+    }>("layer.calculate_transform", {
+      comp: LP,
+      layer: "ct_solid",
+      topLeft: [0, 0, 0],
+      topRight: [500, 0, 0],
+      bottomLeft: [0, 500, 0],
+      apply: true,
+    });
+    expect(res.applied).toBe(true);
+    expect(res.transform.scale).toBeTruthy();
+    expect(res.warnings).toEqual([]);
+  });
+
+  it("egp.open_in_panel and render.save_template guard path", async (ctx) => {
+    if (!ready) return ctx.skip();
+    const egp = await o().run<{ comp: string }>("egp.open_in_panel", { comp: LP });
+    expect(egp.comp).toBe(LP);
+    // saveAsTemplate would permanently add to the user's template list (no
+    // scripting API removes templates), so only the validation path runs here.
+    await o().run("render.add_to_queue", { comp: LP });
+    const err = await o().expectRefusal("render.save_template", { type: "nope", name: "x" });
+    expect(err.message).toContain("render|output");
+    const notify = await o().run<{ warnings: string[] }>("render.set_output", {
+      queueNotify: false,
+    });
+    expect(notify.warnings).toEqual([]);
+    await o().run("render.clear_queue", {});
+  });
+});
