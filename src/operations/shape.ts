@@ -777,3 +777,45 @@ registerOp({
         `;
   },
 });
+
+registerOp({
+  name: "shape.add_wiggle_transform",
+  category: "shape",
+  description:
+    "Add Wiggle Transform to a shape group - randomizes position/scale/rotation over time (the transform-space sibling of Wiggle Paths).",
+  params: [
+    ...shapeTargetParams(),
+    {
+      name: "wigglesPerSecond",
+      type: "number",
+      description: "Temporal frequency (default 2)",
+      required: false,
+      default: 2,
+    },
+    { name: "correlation", type: "number", description: "Correlation % (0-100)", required: false },
+    { name: "position", type: "array", description: "[x,y] wiggle amount in px", required: false },
+    { name: "scale", type: "array", description: "[sx,sy] wiggle amount in %", required: false },
+    {
+      name: "rotation",
+      type: "number",
+      description: "Rotation wiggle amount in degrees",
+      required: false,
+    },
+    { name: "seed", type: "number", description: "Random seed", required: false },
+  ],
+  toJsx(args) {
+    return `
+            ${jsxCompLayerPreamble(args)}
+            ${jsxShapeGroupPreamble(args)}
+            var _wt = _grp.property("Contents").addProperty("ADBE Vector Filter - Wiggler");
+            _wt.property("ADBE Vector Xform Temporal Freq").setValue(${jsxVal(args.wigglesPerSecond ?? 2)});
+            ${args.correlation !== undefined ? `_wt.property("ADBE Vector Correlation").setValue(${jsxVal(args.correlation)});` : ""}
+            ${args.seed !== undefined ? `_wt.property("ADBE Vector Random Seed").setValue(${jsxVal(args.seed)});` : ""}
+            var _wxf = _wt.property("ADBE Vector Wiggler Transform");
+            ${args.position !== undefined ? `_wxf.property("ADBE Vector Wiggler Position").setValue(${jsxVal(args.position)});` : ""}
+            ${args.scale !== undefined ? `_wxf.property("ADBE Vector Wiggler Scale").setValue(${jsxVal(args.scale)});` : ""}
+            ${args.rotation !== undefined ? `_wxf.property("ADBE Vector Wiggler Rotation").setValue(${jsxVal(args.rotation)});` : ""}
+            return { ok: true, name: _wt.name };
+        `;
+  },
+});
