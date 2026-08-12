@@ -341,6 +341,49 @@ describe("render queue raw settings and per-item control", () => {
   });
 });
 
+describe("keyframe interpolation and labels", () => {
+  it("keyframe.set_interpolation allows asymmetric in/out and keeps unspecified sides", () => {
+    const op = getOp("keyframe.set_interpolation");
+    const jsx = op!.toJsx({
+      comp: "Main",
+      layer: 1,
+      property: ["Transform", "Position"],
+      keyIndex: 2,
+      outType: "hold",
+    });
+    expect(jsx).toContain("KeyframeInterpolationType.HOLD");
+    expect(jsx).toContain("keyInInterpolationType(_ki)");
+    expect(jsx).toContain("setInterpolationTypeAtKey");
+    expect(jsx).toContain("isInterpolationTypeValid");
+  });
+
+  it("keyframe.set_interpolation orders continuity before auto-bezier", () => {
+    const jsx = getOp("keyframe.set_interpolation")!.toJsx({
+      comp: "Main",
+      layer: 1,
+      property: ["Transform", "Opacity"],
+      keyIndex: 1,
+      temporalContinuous: false,
+      temporalAutoBezier: true,
+    });
+    expect(jsx.indexOf("setTemporalContinuousAtKey")).toBeLessThan(
+      jsx.indexOf("setTemporalAutoBezierAtKey"),
+    );
+  });
+
+  it("keyframe.set_label guards the AE 22.6 API", () => {
+    const jsx = getOp("keyframe.set_label")!.toJsx({
+      comp: "Main",
+      layer: 1,
+      property: ["Transform", "Position"],
+      keyIndex: 1,
+      label: 9,
+    });
+    expect(jsx).toContain("setLabelAtKey(_ki, 9)");
+    expect(jsx).toContain("AE 22.6+");
+  });
+});
+
 describe("layer.set_props enum coercion", () => {
   it("routes every assignment through AE.coerceLayerPropValue", () => {
     const op = getOp("layer.set_props");
