@@ -249,7 +249,8 @@ registerOp({
     {
       name: "type",
       type: "string",
-      description: "AVLayer|TextLayer|ShapeLayer|CameraLayer|LightLayer",
+      description:
+        "AVLayer|TextLayer|ShapeLayer|CameraLayer|LightLayer|ThreeDModelLayer|ParametricMeshLayer",
       required: false,
     },
     {
@@ -277,6 +278,11 @@ registerOp({
                 }
             }
             function typeName(layer) {
+                // 3D model / parametric mesh classes only exist on AE 24.4+ /
+                // 26.3+ — probe before instanceof, and before the AVLayer
+                // fallback (both are AVLayer subclasses).
+                try { if (typeof ThreeDModelLayer !== "undefined" && layer instanceof ThreeDModelLayer) return "ThreeDModelLayer"; } catch (e3d) {}
+                try { if (typeof ParametricMeshLayer !== "undefined" && layer instanceof ParametricMeshLayer) return "ParametricMeshLayer"; } catch (ePm) {}
                 if (layer instanceof TextLayer) return "TextLayer";
                 if (layer instanceof ShapeLayer) return "ShapeLayer";
                 if (layer instanceof CameraLayer) return "CameraLayer";
