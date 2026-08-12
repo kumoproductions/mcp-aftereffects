@@ -505,6 +505,7 @@ registerOp({
 registerOp({
   name: "render.save_template",
   category: "render",
+  appConfig: true,
   description:
     "Save a queue item's current render settings, or an output module's current settings, as a named template (saveAsTemplate) for reuse via render.set_output.",
   params: [

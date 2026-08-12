@@ -84,6 +84,7 @@ registerOp({
 registerOp({
   name: "pref.set",
   category: "pref",
+  appConfig: true,
   description:
     "Write one After Effects preference (app.preferences.savePrefAs*) and flush to disk. A wrong value can misconfigure AE until preferences are reset — read the current value with pref.get first.",
   params: [
@@ -137,6 +138,7 @@ registerOp({
 registerOp({
   name: "pref.delete",
   category: "pref",
+  appConfig: true,
   description: "Delete one After Effects preference (app.preferences.deletePref).",
   params: [
     { name: "section", type: "string", description: "Preference section name", required: true },
@@ -185,6 +187,7 @@ registerOp({
 registerOp({
   name: "pref.set_setting",
   category: "pref",
+  appConfig: true,
   description:
     "Write a script-scoped setting (app.settings.saveSetting). Values are stored as strings.",
   params: [

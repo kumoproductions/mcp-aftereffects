@@ -276,6 +276,7 @@ registerOp({
 registerOp({
   name: "font.set_favorites",
   category: "font",
+  appConfig: true,
   description:
     "Replace the Character panel's Favorites font family list (FontsObject.favoriteFontFamilyList, AE 24.6+).",
   params: [
@@ -298,6 +299,7 @@ registerOp({
 registerOp({
   name: "font.set_substitution",
   category: "font",
+  appConfig: true,
   description:
     "Configure automatic replacement of substituted (missing) fonts (AE 24.6+): matchPolicy postScriptName|ctfiEqual|disabled, and freezeSync to stop Adobe Fonts auto-sync on project open.",
   params: [
@@ -381,6 +383,7 @@ registerOp({
 registerOp({
   name: "font.set_default_for_script",
   category: "font",
+  appConfig: true,
   description:
     "Set the default font AE uses for a writing script (FontsObject.setDefaultFontForCTScript, AE 25.1+). Script names as in font.get_default_for_script; font by PostScript name.",
   params: [

@@ -811,6 +811,7 @@ registerOp({
 registerOp({
   name: "project.set_default_import_folder",
   category: "project",
+  appConfig: true,
   description:
     "Set the folder shown by default in the file import dialog (Project.setDefaultImportFolder).",
   params: [{ name: "path", type: "string", description: "Absolute folder path", required: true }],
@@ -870,6 +871,7 @@ registerOp({
 registerOp({
   name: "project.set_tool",
   category: "project",
+  appConfig: true,
   description:
     "Set the active tool in the Tools panel (Project.toolType, AE 14.0+): selection|rotate|hand|zoom|panBehind|rect|roundedRect|ellipse|polygon|star|textHorizontal|textVertical|pen|maskFeather|brush|cloneStamp|eraser|puppetPin|puppetStarch|puppetBend|puppetAdvanced|puppetOverlap|cameraUnified|cameraOrbit|cameraTrackXY|cameraTrackZ|cameraOrbitCursor|cameraOrbitScene|cameraOrbitCamera|cameraPanCursor.",
   params: [
@@ -889,6 +891,7 @@ registerOp({
 registerOp({
   name: "project.set_memory_limits",
   category: "project",
+  appConfig: true,
   description:
     "Set AE memory usage limits (app.setMemoryUsageLimits): image cache percent and maximum memory percent. Percentages over 100 are allowed (AE interprets them against installed RAM).",
   params: [
@@ -916,6 +919,7 @@ registerOp({
 registerOp({
   name: "project.set_multi_frame_rendering",
   category: "project",
+  appConfig: true,
   description:
     "Configure Multi-Frame Rendering (app.setMultiFrameRenderingConfig, AE 22.0+): on/off and the maximum CPU percentage MFR may use.",
   params: [
