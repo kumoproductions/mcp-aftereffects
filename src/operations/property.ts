@@ -311,3 +311,36 @@ registerOp({
         `;
   },
 });
+
+registerOp({
+  name: "property.select",
+  category: "property",
+  description:
+    "Select or deselect a property in the timeline (PropertyBase.selected) - stages it for UI-side actions and makes it visible with the U-shortcut workflow.",
+  params: [
+    { name: "comp", type: "any", description: "Comp name or id", required: true },
+    {
+      name: "layer",
+      type: "any",
+      description: "1-based layer index, or the layer name",
+      required: true,
+    },
+    { name: "property", type: "array", description: "Property path", required: true },
+    {
+      name: "selected",
+      type: "boolean",
+      description: "true=select, false=deselect (default true)",
+      required: false,
+      default: true,
+    },
+  ],
+  toJsx(args) {
+    return `
+            ${jsxCompLayerPreamble(args)}
+            var _propPath = ${jsxVal(args.property)};
+            ${jsxPropertyLookup()}
+            try { _node.selected = ${jsxVal(args.selected !== false)}; } catch (eSl) { return { ok: false, error: "selected set failed: " + AE.errText(eSl) }; }
+            return { ok: true, property: _node.name, selected: _node.selected };
+        `;
+  },
+});

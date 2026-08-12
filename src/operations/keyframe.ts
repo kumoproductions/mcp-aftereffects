@@ -587,3 +587,51 @@ registerOp({
         `;
   },
 });
+
+registerOp({
+  name: "keyframe.set_selected",
+  category: "keyframe",
+  description:
+    "Select or deselect keyframes on a property (Property.setSelectedAtKey) - e.g. to stage keys for a user-facing copy/paste in the UI.",
+  params: [
+    { name: "comp", type: "any", description: "Comp name or id", required: true },
+    {
+      name: "layer",
+      type: "any",
+      description: "1-based layer index, or the layer name",
+      required: true,
+    },
+    { name: "property", type: "array", description: "Property path", required: true },
+    {
+      name: "keyIndex",
+      type: "any",
+      description: "1-based keyframe index, or 'all'",
+      required: true,
+    },
+    {
+      name: "selected",
+      type: "boolean",
+      description: "true=select, false=deselect",
+      required: true,
+    },
+  ],
+  toJsx(args) {
+    return `
+            ${jsxCompLayerPreamble(args)}
+            var _propPath = ${jsxVal(args.property)};
+            ${jsxPropertyLookup()}
+            var _kiArg = ${jsxVal(args.keyIndex)};
+            var _sel = ${jsxVal(args.selected)};
+            var _touched = 0;
+            if (_kiArg === "all") {
+                for (var _ki2 = 1; _ki2 <= _node.numKeys; _ki2++) {
+                    try { _node.setSelectedAtKey(_ki2, _sel); _touched++; } catch (eK) {}
+                }
+            } else {
+                if (_kiArg < 1 || _kiArg > _node.numKeys) return { ok: false, error: "key index out of range" };
+                try { _node.setSelectedAtKey(_kiArg, _sel); _touched = 1; } catch (eK2) { return { ok: false, error: "setSelectedAtKey failed: " + AE.errText(eK2) }; }
+            }
+            return { ok: true, touched: _touched, selectedKeys: AE.valueToJson(_node.selectedKeys) };
+        `;
+  },
+});
