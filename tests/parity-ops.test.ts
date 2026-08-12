@@ -547,6 +547,36 @@ describe("footage parity ops", () => {
   });
 });
 
+describe("project.new / egp.add_layer / viewer extensions", () => {
+  it("project.new refuses to silently discard an unsaveable project when save=true", () => {
+    const jsx = getOp("project.new")!.toJsx({ save: true });
+    expect(jsx).toContain("app.newProject()");
+    expect(jsx).toContain("no file path");
+  });
+
+  it("egp.add_layer checks eligibility and supports the As variant", () => {
+    const jsx = getOp("egp.add_layer")!.toJsx({
+      comp: "Master",
+      layer: 1,
+      controllerName: "Hero Clip",
+    });
+    expect(jsx).toContain("canAddToMotionGraphicsTemplate");
+    expect(jsx).toContain("addToMotionGraphicsTemplateAs");
+    expect(jsx).toContain("AE 18.0+");
+  });
+
+  it("viewer.set_options maps fastPreview and channels enums", () => {
+    const jsx = getOp("viewer.set_options")!.toJsx({
+      fastPreview: "adaptiveResolution",
+      channels: "alphaOverlay",
+      guidesSnap: true,
+    });
+    expect(jsx).toContain("FastPreviewType.FP_ADAPTIVE_RESOLUTION");
+    expect(jsx).toContain("ChannelType.CHANNEL_ALPHA_OVERLAY");
+    expect(jsx).toContain("_opts.guidesSnap = true");
+  });
+});
+
 describe("layer.set_props enum coercion", () => {
   it("routes every assignment through AE.coerceLayerPropValue", () => {
     const op = getOp("layer.set_props");
