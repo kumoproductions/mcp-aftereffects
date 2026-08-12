@@ -459,3 +459,131 @@ registerOp({
         `;
   },
 });
+
+registerOp({
+  name: "keyframe.set_interpolation",
+  category: "keyframe",
+  description:
+    "Set a keyframe's in/out interpolation types directly (linear|bezier|hold — asymmetric combinations allowed, e.g. bezier in / hold out), and the temporal continuous / auto-bezier flags. For speed/influence curves use keyframe.set_easing.",
+  params: [
+    { name: "comp", type: "any", description: "Comp name or id", required: true },
+    {
+      name: "layer",
+      type: "any",
+      description: "1-based layer index, or the layer name",
+      required: true,
+    },
+    { name: "property", type: "array", description: "Property path", required: true },
+    { name: "keyIndex", type: "number", description: "1-based keyframe index", required: true },
+    {
+      name: "inType",
+      type: "string",
+      description: "linear|bezier|hold (default: keep current)",
+      required: false,
+    },
+    {
+      name: "outType",
+      type: "string",
+      description: "linear|bezier|hold (default: keep current)",
+      required: false,
+    },
+    {
+      name: "temporalContinuous",
+      type: "boolean",
+      description: "Temporal continuity flag",
+      required: false,
+    },
+    {
+      name: "temporalAutoBezier",
+      type: "boolean",
+      description: "Temporal auto-bezier flag (true also enables continuity)",
+      required: false,
+    },
+  ],
+  toJsx(args) {
+    const flagSets: string[] = [];
+    // Continuity before auto-bezier: enabling auto-bezier also enables
+    // continuity in AE, so the opposite order would clobber an explicit
+    // temporalContinuous: false.
+    if (args.temporalContinuous !== undefined)
+      flagSets.push(
+        `try { _node.setTemporalContinuousAtKey(_ki, ${jsxVal(args.temporalContinuous)}); } catch (eTc) { _w.push("temporalContinuous: " + AE.errText(eTc)); }`,
+      );
+    if (args.temporalAutoBezier !== undefined)
+      flagSets.push(
+        `try { _node.setTemporalAutoBezierAtKey(_ki, ${jsxVal(args.temporalAutoBezier)}); } catch (eTb) { _w.push("temporalAutoBezier: " + AE.errText(eTb)); }`,
+      );
+    return `
+            ${jsxCompLayerPreamble(args)}
+            var _propPath = ${jsxVal(args.property)};
+            ${jsxPropertyLookup()}
+            var _ki = ${jsxVal(args.keyIndex)};
+            if (_ki < 1 || _ki > _node.numKeys) return { ok: false, error: "key index out of range" };
+            var _w = [];
+            var _itMap = { "linear": KeyframeInterpolationType.LINEAR, "bezier": KeyframeInterpolationType.BEZIER, "hold": KeyframeInterpolationType.HOLD };
+            var _inArg = ${jsxVal(args.inType ?? null)};
+            var _outArg = ${jsxVal(args.outType ?? null)};
+            if (_inArg !== null || _outArg !== null) {
+                if (_inArg !== null && !_itMap.hasOwnProperty(_inArg)) return { ok: false, error: "inType must be linear|bezier|hold" };
+                if (_outArg !== null && !_itMap.hasOwnProperty(_outArg)) return { ok: false, error: "outType must be linear|bezier|hold" };
+                var _in = _inArg !== null ? _itMap[_inArg] : _node.keyInInterpolationType(_ki);
+                var _out = _outArg !== null ? _itMap[_outArg] : _node.keyOutInterpolationType(_ki);
+                if (!_node.isInterpolationTypeValid(_in) || !_node.isInterpolationTypeValid(_out)) {
+                    return { ok: false, error: "interpolation type not valid for this property" };
+                }
+                try { _node.setInterpolationTypeAtKey(_ki, _in, _out); } catch (eIt) { return { ok: false, error: "setInterpolationTypeAtKey failed: " + AE.errText(eIt) }; }
+            }
+            ${flagSets.join("\n")}
+            function _itName(v) {
+                if (v === KeyframeInterpolationType.LINEAR) return "linear";
+                if (v === KeyframeInterpolationType.BEZIER) return "bezier";
+                if (v === KeyframeInterpolationType.HOLD) return "hold";
+                return null;
+            }
+            return {
+                ok: true,
+                keyIndex: _ki,
+                inType: _itName(_node.keyInInterpolationType(_ki)),
+                outType: _itName(_node.keyOutInterpolationType(_ki)),
+                temporalContinuous: AE.safeGet(function () { return _node.keyTemporalContinuous(_ki); }, null),
+                temporalAutoBezier: AE.safeGet(function () { return _node.keyTemporalAutoBezier(_ki); }, null),
+                warnings: _w
+            };
+        `;
+  },
+});
+
+registerOp({
+  name: "keyframe.set_label",
+  category: "keyframe",
+  description: "Set a keyframe's label color (Property.setLabelAtKey, AE 22.6+).",
+  params: [
+    { name: "comp", type: "any", description: "Comp name or id", required: true },
+    {
+      name: "layer",
+      type: "any",
+      description: "1-based layer index, or the layer name",
+      required: true,
+    },
+    { name: "property", type: "array", description: "Property path", required: true },
+    { name: "keyIndex", type: "number", description: "1-based keyframe index", required: true },
+    {
+      name: "label",
+      type: "number",
+      description: "Label color index 0-16 (0 = none)",
+      required: true,
+    },
+  ],
+  toJsx(args) {
+    return `
+            ${jsxCompLayerPreamble(args)}
+            var _propPath = ${jsxVal(args.property)};
+            ${jsxPropertyLookup()}
+            var _ki = ${jsxVal(args.keyIndex)};
+            if (_ki < 1 || _ki > _node.numKeys) return { ok: false, error: "key index out of range" };
+            if (typeof _node.setLabelAtKey !== "function") return { ok: false, error: "setLabelAtKey needs AE 22.6+" };
+            try { _node.setLabelAtKey(_ki, ${jsxVal(args.label)}); } catch (eLb) { return { ok: false, error: "setLabelAtKey failed: " + AE.errText(eLb) }; }
+            return { ok: true, keyIndex: _ki, label: _node.keyLabel(_ki) };
+        `;
+  },
+});
