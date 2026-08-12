@@ -369,19 +369,27 @@
         var dialogsSuppressed = false;
         response.phase = "execute";
         try {
-            // Suppress modal alerts for the duration of the request. try/catch
-            // inside the executed code cannot stop everything: project.open on
-            // an AEP with missing footage/fonts, or an effect raising its own
-            // warning, pops a modal that blocks every later `-r` launch until a
-            // human clicks OK. Suppression MUST be undone in the finally below —
-            // left on, it would silently eat dialogs for the user's whole
-            // interactive session.
-            try {
-                app.beginSuppressDialogs();
-                dialogsSuppressed = true;
-            } catch (eSup) { /* unavailable — run with dialogs enabled */ }
-
             if (wantUndoGroup) {
+                // Suppress modal alerts for the duration of the request.
+                // try/catch inside the executed code cannot stop everything:
+                // project.open on an AEP with missing footage/fonts, or an
+                // effect raising its own warning, pops a modal that blocks
+                // every later `-r` launch until a human clicks OK. Two rules
+                // keep this safe:
+                //   - MUST be undone in the finally below — left on, it would
+                //     silently eat dialogs for the user's whole session.
+                //   - ONLY for grouped requests. beginSuppressDialogs opens an
+                //     undo-transaction-like scope of its own, so wrapping the
+                //     bare undo/redo requests (undoGroup: false) makes AE
+                //     resolve Undo against THAT scope: the undo reverts
+                //     nothing and the stack pops unbalanced ("UndoGroup
+                //     Mismatch" warnings, broken redo). Exactly the reason
+                //     those requests skip beginUndoGroup — they skip this too.
+                try {
+                    app.beginSuppressDialogs();
+                    dialogsSuppressed = true;
+                } catch (eSup) { /* unavailable — run with dialogs enabled */ }
+
                 app.beginUndoGroup(undoLabel);
                 undoOpen = true;
             }

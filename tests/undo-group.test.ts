@@ -106,9 +106,34 @@ describe("dispatcher", () => {
   it("opens an undo group only when the request asks for one", () => {
     expect(DISPATCHER).toContain("request.undoGroup !== false");
     // One call site, and it sits inside the guard — an unguarded second one
-    // would silently re-group undo/redo.
+    // would silently re-group undo/redo. The guard block also carries the
+    // dialog-suppression calls, so match "inside the if-block" structurally:
+    // no `} ... else` or new statement dedent between guard and call, just
+    // whatever suppression lines precede it without closing the block.
     expect(DISPATCHER.match(/app\.beginUndoGroup\(/g)).toHaveLength(1);
-    expect(/if \(wantUndoGroup\) \{\s*app\.beginUndoGroup\(/.test(DISPATCHER)).toBe(true);
+    const guardBlock = /if \(wantUndoGroup\) \{([\s\S]*?)app\.beginUndoGroup\(/.exec(DISPATCHER);
+    expect(guardBlock, "beginUndoGroup must come after the wantUndoGroup guard").toBeTruthy();
+    // Between the guard and the call, braces must stay balanced-open (the
+    // try/catch around beginSuppressDialogs is fine; a closed guard is not).
+    const between = guardBlock?.[1] ?? "";
+    const opens = (between.match(/\{/g) ?? []).length;
+    const closes = (between.match(/\}/g) ?? []).length;
+    expect(
+      opens,
+      "the wantUndoGroup block must still be open at beginUndoGroup",
+    ).toBeGreaterThanOrEqual(closes);
+  });
+
+  it("suppresses dialogs only for grouped requests, never for undo/redo", () => {
+    // beginSuppressDialogs opens an undo-transaction-like scope of its own:
+    // wrapping the bare undo/redo requests in it makes AE resolve Undo against
+    // that scope (nothing reverts, async "UndoGroup Mismatch" dialogs). The
+    // suppression call must live inside the same wantUndoGroup guard.
+    expect(DISPATCHER.match(/app\.beginSuppressDialogs\(\)/g)).toHaveLength(1);
+    const guard = /if \(wantUndoGroup\) \{([\s\S]*?)app\.beginUndoGroup\(/.exec(DISPATCHER);
+    expect(guard?.[1]).toContain("beginSuppressDialogs");
+    // And it must always be released, without replaying the queued alerts.
+    expect(DISPATCHER).toContain("endSuppressDialogs(false)");
   });
 
   it("closes the group only when it opened one", () => {
