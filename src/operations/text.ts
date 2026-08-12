@@ -750,6 +750,125 @@ registerOp({
 });
 
 registerOp({
+  name: "text.set_variable_font",
+  category: "text",
+  description:
+    'Set variable-font design axes on a text layer (AE 24.0+). axes maps axis tags to values, e.g. { "wght": 700, "wdth": 85 }. Unspecified axes keep their current values. Discover a font\'s axes with font.info (designAxesData).',
+  params: [
+    { name: "comp", type: "any", description: "Comp name or id", required: true },
+    {
+      name: "layer",
+      type: "any",
+      description: "1-based layer index, or the layer name",
+      required: true,
+    },
+    {
+      name: "axes",
+      type: "object",
+      description: 'Axis tag -> value map, e.g. { "wght": 700 }',
+      required: true,
+    },
+  ],
+  toJsx(args) {
+    return `
+            ${jsxCompLayerPreamble(args)}
+            if (!(_layer instanceof TextLayer)) return { ok: false, error: "not a TextLayer" };
+            var _src = _layer.property("Source Text");
+            var _doc = _src.value;
+            var _fo = null;
+            try { _fo = _doc.fontObject; } catch (eFo) {}
+            if (!_fo) return { ok: false, error: "TextDocument.fontObject needs AE 24.0+" };
+            if (!_fo.hasDesignAxes) return { ok: false, error: "font '" + _fo.postScriptName + "' is not a variable font" };
+            var _axes = ${jsxVal(args.axes)};
+            var _data = _fo.designAxesData;
+            var _vec = [];
+            try {
+                var _cur = _fo.designVector;
+                for (var _i = 0; _i < _data.length; _i++) _vec.push(_cur[_i]);
+            } catch (eCv) {
+                for (var _i2 = 0; _i2 < _data.length; _i2++) _vec.push(_data[_i2].min);
+            }
+            var _w = [];
+            var _known = {};
+            for (var _di = 0; _di < _data.length; _di++) {
+                var _ax = _data[_di];
+                _known[_ax.tag] = true;
+                if (_axes.hasOwnProperty(_ax.tag)) {
+                    var _v = _axes[_ax.tag];
+                    if (typeof _v !== "number") { _w.push(_ax.tag + ": value must be a number"); continue; }
+                    if (_v < _ax.min || _v > _ax.max) _w.push(_ax.tag + ": " + _v + " outside [" + _ax.min + ", " + _ax.max + "] — AE may clamp");
+                    _vec[_di] = _v;
+                }
+            }
+            for (var _tag in _axes) {
+                if (_axes.hasOwnProperty(_tag) && _known[_tag] !== true) _w.push(_tag + ": no such axis on this font");
+            }
+            var _ps = null;
+            try { _ps = _fo.postScriptNameForDesignVector(_vec); } catch (ePs) { return { ok: false, error: "postScriptNameForDesignVector failed: " + AE.errText(ePs) }; }
+            _doc.font = _ps;
+            _src.setValue(_doc);
+            return { ok: true, postScriptName: _ps, vector: AE.valueToJson(_vec), warnings: _w };
+        `;
+  },
+});
+
+registerOp({
+  name: "text.add_font_axis",
+  category: "text",
+  description:
+    "Add a variable-font axis property to a text animator (PropertyGroup.addVariableFontAxis, AE 26.0+) so the axis can be animated/keyframed. Targets an existing animator by 1-based index or name, or creates a new one.",
+  params: [
+    { name: "comp", type: "any", description: "Comp name or id", required: true },
+    {
+      name: "layer",
+      type: "any",
+      description: "1-based layer index, or the layer name",
+      required: true,
+    },
+    {
+      name: "axisTag",
+      type: "string",
+      description: "Four-character axis tag, e.g. 'wght'",
+      required: true,
+    },
+    {
+      name: "animator",
+      type: "any",
+      description: "Existing animator (1-based index or name). Omit to create a new animator.",
+      required: false,
+    },
+    { name: "value", type: "number", description: "Initial axis value", required: false },
+  ],
+  toJsx(args) {
+    return `
+            ${jsxCompLayerPreamble(args)}
+            if (!(_layer instanceof TextLayer)) return { ok: false, error: "not a TextLayer" };
+            var _animators = _layer.property("ADBE Text Properties").property("ADBE Text Animators");
+            if (!_animators) return { ok: false, error: "no Animators group on layer" };
+            var _animArg = ${jsxVal(args.animator ?? null)};
+            var _anim = null;
+            if (_animArg === null) {
+                _anim = _animators.addProperty("ADBE Text Animator");
+            } else {
+                try { _anim = _animators.property(_animArg); } catch (eA) {}
+                if (!_anim) return { ok: false, error: "no animator matching " + _animArg };
+            }
+            var _animProps = _anim.property("ADBE Text Animator Properties");
+            if (typeof _animProps.addVariableFontAxis !== "function") return { ok: false, error: "addVariableFontAxis needs AE 26.0+" };
+            var _axis = null;
+            try { _axis = _animProps.addVariableFontAxis(${jsxVal(args.axisTag)}); } catch (eAx) { return { ok: false, error: "addVariableFontAxis failed: " + AE.errText(eAx) }; }
+            var _w = [];
+            ${
+              args.value !== undefined
+                ? `try { _axis.setValue(${jsxVal(args.value)}); } catch (eV) { _w.push("value: " + AE.errText(eV)); }`
+                : ""
+            }
+            return { ok: true, animator: _anim.name, axis: AE.safeGet(function () { return _axis.name; }, ${jsxVal(args.axisTag)}), warnings: _w };
+        `;
+  },
+});
+
+registerOp({
   name: "text.add_animator",
   category: "text",
   description:
