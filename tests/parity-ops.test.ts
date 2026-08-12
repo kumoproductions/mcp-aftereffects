@@ -878,9 +878,9 @@ describe("low-priority parity ops", () => {
       layer: 1,
       topLeft: [0, 0, 0],
       topRight: [100, 0, 0],
-      bottomLeft: [0, 100, 0],
+      bottomRight: [100, 100, 0],
     });
-    expect(jsx).toContain("calculateTransformFromPoints([0,0,0], [100,0,0], [0,100,0])");
+    expect(jsx).toContain("calculateTransformFromPoints([0,0,0], [100,0,0], [100,100,0])");
     expect(jsx).not.toContain("setValue");
   });
 
