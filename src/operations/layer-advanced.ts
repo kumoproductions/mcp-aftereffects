@@ -369,3 +369,73 @@ registerOp({
         `;
   },
 });
+
+registerOp({
+  name: "layer.calculate_transform",
+  category: "layer",
+  readOnly: true,
+  description:
+    "Calculate the transform that maps a 3D layer onto three corner points (AVLayer.calculateTransformFromPoints) - corner-pin style placement in 3D space. Returns anchorPoint/position/x-y-zRotation/scale; pass apply=true to also set them on the layer (which makes the call mutating).",
+  params: [
+    { name: "comp", type: "any", description: "Comp name or id", required: true },
+    {
+      name: "layer",
+      type: "any",
+      description: "1-based layer index, or the layer name (3D layer)",
+      required: true,
+    },
+    {
+      name: "topLeft",
+      type: "array",
+      description: "[x,y,z] world point for the layer's top-left",
+      required: true,
+    },
+    {
+      name: "topRight",
+      type: "array",
+      description: "[x,y,z] world point for the top-right",
+      required: true,
+    },
+    {
+      name: "bottomLeft",
+      type: "array",
+      description: "[x,y,z] world point for the bottom-left",
+      required: true,
+    },
+    {
+      name: "apply",
+      type: "boolean",
+      description: "Apply the result to the layer's transform (default false)",
+      required: false,
+      default: false,
+    },
+  ],
+  toJsx(args) {
+    const applyJsx =
+      args.apply !== true
+        ? ""
+        : `
+            var _xfg = _layer.property("Transform");
+            function _setXf(propName, v) {
+                if (v === undefined) return;
+                try { _xfg.property(propName).setValue(v); } catch (eSx) { _w.push(propName + ": " + AE.errText(eSx)); }
+            }
+            _setXf("Anchor Point", _xf.anchorPoint);
+            _setXf("Position", _xf.position);
+            _setXf("X Rotation", _xf.xRotation);
+            _setXf("Y Rotation", _xf.yRotation);
+            _setXf("Z Rotation", _xf.zRotation);
+            _setXf("Scale", _xf.scale);
+        `;
+    return `
+            ${jsxCompLayerPreamble(args)}
+            if (typeof _layer.calculateTransformFromPoints !== "function") return { ok: false, error: "calculateTransformFromPoints is not available on this layer" };
+            if (!_layer.threeDLayer) return { ok: false, error: "layer must be 3D (threeDLayer: true) for calculateTransformFromPoints" };
+            var _xf = null;
+            try { _xf = _layer.calculateTransformFromPoints(${jsxVal(args.topLeft)}, ${jsxVal(args.topRight)}, ${jsxVal(args.bottomLeft)}); } catch (eCt) { return { ok: false, error: "calculateTransformFromPoints failed: " + AE.errText(eCt) }; }
+            var _w = [];
+            ${applyJsx}
+            return { ok: true, transform: AE.valueToJson(_xf), applied: ${jsxVal(args.apply === true)}, warnings: _w };
+        `;
+  },
+});
