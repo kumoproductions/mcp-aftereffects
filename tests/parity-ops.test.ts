@@ -255,6 +255,50 @@ describe("text.set_box 24.6 controls", () => {
   });
 });
 
+describe("font inspection ops", () => {
+  it("font.info looks up by postScriptName or family and reports design axes", () => {
+    const op = getOp("font.info");
+    expect(op!.readOnly).toBe(true);
+    const jsx = op!.toJsx({ postScriptName: "ArialMT" });
+    expect(jsx).toContain("getFontsByPostScriptName");
+    expect(jsx).toContain("designAxesData");
+    const byFamily = op!.toJsx({ family: "Arial", style: "Bold" });
+    expect(byFamily).toContain('getFontsByFamilyNameAndStyleName(_family, "Bold")');
+  });
+
+  it("font.check_glyphs guards the AE 25.1 API", () => {
+    const op = getOp("font.check_glyphs");
+    const jsx = op!.toJsx({ postScriptName: "ArialMT", text: "こんにちは" });
+    expect(jsx).toContain("hasGlyphsFor");
+    expect(jsx).toContain("AE 25.1+");
+  });
+
+  it("font.list_used serializes Project.usedFonts entries", () => {
+    const op = getOp("font.list_used");
+    const jsx = op!.toJsx({});
+    expect(jsx).toContain("usedFonts");
+    expect(jsx).toContain("usedAt");
+  });
+});
+
+describe("variable font ops", () => {
+  it("text.set_variable_font builds the design vector from the tag map", () => {
+    const op = getOp("text.set_variable_font");
+    const jsx = op!.toJsx({ comp: "Main", layer: 1, axes: { wght: 700 } });
+    expect(jsx).toContain("postScriptNameForDesignVector");
+    expect(jsx).toContain("designAxesData");
+    expect(jsx).toContain("no such axis on this font");
+  });
+
+  it("text.add_font_axis guards the AE 26.0 API and sets an initial value", () => {
+    const op = getOp("text.add_font_axis");
+    const jsx = op!.toJsx({ comp: "Main", layer: 1, axisTag: "wght", value: 500 });
+    expect(jsx).toContain("addVariableFontAxis");
+    expect(jsx).toContain("AE 26.0+");
+    expect(jsx).toContain("_axis.setValue(500)");
+  });
+});
+
 describe("layer.set_props enum coercion", () => {
   it("routes every assignment through AE.coerceLayerPropValue", () => {
     const op = getOp("layer.set_props");
