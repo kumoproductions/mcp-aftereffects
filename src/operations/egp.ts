@@ -194,3 +194,56 @@ registerOp({
         `;
   },
 });
+
+registerOp({
+  name: "egp.add_layer",
+  category: "egp",
+  description:
+    "Expose a whole LAYER in a comp's Essential Graphics panel as a Media Replacement controller (AVLayer.addToMotionGraphicsTemplate, AE 18.0+). For single properties use egp.add_property.",
+  params: [
+    { name: "comp", type: "any", description: "Comp containing the layer", required: true },
+    {
+      name: "layer",
+      type: "any",
+      description: "1-based layer index, or the layer name",
+      required: true,
+    },
+    {
+      name: "masterComp",
+      type: "any",
+      description: "Template master comp (default: same as comp)",
+      required: false,
+    },
+    {
+      name: "controllerName",
+      type: "string",
+      description: "Display name in the Essential Graphics panel (default: layer name)",
+      required: false,
+    },
+  ],
+  toJsx(args) {
+    return `
+            ${jsxCompLayerPreamble(args)}
+            var _masterArg = ${jsxVal(args.masterComp ?? null)};
+            var _master = _masterArg === null ? _comp : AE.findCompByNameOrId(_masterArg);
+            if (!_master) return { ok: false, error: "no master comp matching " + String(_masterArg) };
+            if (typeof _layer.addToMotionGraphicsTemplate !== "function") {
+                return { ok: false, error: "addToMotionGraphicsTemplate needs AE 18.0+" };
+            }
+            var _can = false;
+            try { _can = _layer.canAddToMotionGraphicsTemplate(_master); } catch (eCan) {}
+            if (!_can) return { ok: false, error: "layer '" + _layer.name + "' cannot be added to the Essential Graphics panel of '" + _master.name + "' — only AVLayers with footage/comp sources qualify for media replacement" };
+            var _name = ${jsxVal(args.controllerName ?? null)};
+            try {
+                if (_name !== null && typeof _layer.addToMotionGraphicsTemplateAs === "function") {
+                    _layer.addToMotionGraphicsTemplateAs(_master, _name);
+                } else {
+                    _layer.addToMotionGraphicsTemplate(_master);
+                }
+            } catch (eAdd) { return { ok: false, error: "addToMotionGraphicsTemplate failed: " + AE.errText(eAdd) }; }
+            var _count = null;
+            try { _count = _master.motionGraphicsTemplateControllerCount; } catch (eCnt) {}
+            return { ok: true, layer: _layer.name, masterComp: _master.name, controllerCount: _count };
+        `;
+  },
+});
