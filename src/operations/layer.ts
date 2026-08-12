@@ -570,3 +570,127 @@ registerOp({
         `;
   },
 });
+
+registerOp({
+  name: "layer.add_guide",
+  category: "layer",
+  description:
+    "Add a ruler guide to a layer's Layer panel view (Layer.addGuide, AE 16.1+). Comp-panel guides live under comp.add_guide.",
+  params: [
+    { name: "comp", type: "any", description: "Comp name or id", required: true },
+    {
+      name: "layer",
+      type: "any",
+      description: "1-based layer index, or the layer name",
+      required: true,
+    },
+    {
+      name: "orientation",
+      type: "string",
+      description: "horizontal|vertical",
+      required: true,
+    },
+    {
+      name: "position",
+      type: "number",
+      description: "Position in px (y for horizontal, x for vertical)",
+      required: true,
+    },
+  ],
+  toJsx(args) {
+    return `
+            ${jsxCompLayerPreamble(args)}
+            if (typeof _layer.addGuide !== "function") return { ok: false, error: "layer guides need AE 16.1+" };
+            var _orient = ${jsxVal(args.orientation)} === "vertical" ? 1 : 0;
+            var _idx = _layer.addGuide(_orient, ${jsxVal(args.position)});
+            return { ok: true, guideIndex: _idx, numGuides: _layer.guides.length };
+        `;
+  },
+});
+
+registerOp({
+  name: "layer.remove_guide",
+  category: "layer",
+  description: "Remove a Layer-panel ruler guide by its 0-based index (see layer.list_guides).",
+  params: [
+    { name: "comp", type: "any", description: "Comp name or id", required: true },
+    {
+      name: "layer",
+      type: "any",
+      description: "1-based layer index, or the layer name",
+      required: true,
+    },
+    { name: "guideIndex", type: "number", description: "0-based guide index", required: true },
+  ],
+  toJsx(args) {
+    return `
+            ${jsxCompLayerPreamble(args)}
+            if (typeof _layer.removeGuide !== "function") return { ok: false, error: "layer guides need AE 16.1+" };
+            var _guides = _layer.guides;
+            if (${jsxVal(args.guideIndex)} < 0 || ${jsxVal(args.guideIndex)} >= _guides.length) {
+                return { ok: false, error: "guide index out of range (0-" + (_guides.length - 1) + ")" };
+            }
+            _layer.removeGuide(${jsxVal(args.guideIndex)});
+            return { ok: true, numGuides: _layer.guides.length };
+        `;
+  },
+});
+
+registerOp({
+  name: "layer.move_guide",
+  category: "layer",
+  description:
+    "Move an existing Layer-panel ruler guide to a new position (Layer.setGuide). Named move_guide because layer.set_guide already means the guide-LAYER flag.",
+  params: [
+    { name: "comp", type: "any", description: "Comp name or id", required: true },
+    {
+      name: "layer",
+      type: "any",
+      description: "1-based layer index, or the layer name",
+      required: true,
+    },
+    { name: "guideIndex", type: "number", description: "0-based guide index", required: true },
+    { name: "position", type: "number", description: "New position in px", required: true },
+  ],
+  toJsx(args) {
+    return `
+            ${jsxCompLayerPreamble(args)}
+            if (typeof _layer.setGuide !== "function") return { ok: false, error: "layer guides need AE 16.1+" };
+            var _guides = _layer.guides;
+            if (${jsxVal(args.guideIndex)} < 0 || ${jsxVal(args.guideIndex)} >= _guides.length) {
+                return { ok: false, error: "guide index out of range (0-" + (_guides.length - 1) + ")" };
+            }
+            _layer.setGuide(${jsxVal(args.position)}, ${jsxVal(args.guideIndex)});
+            return { ok: true, guideIndex: ${jsxVal(args.guideIndex)}, position: ${jsxVal(args.position)} };
+        `;
+  },
+});
+
+registerOp({
+  name: "layer.list_guides",
+  category: "layer",
+  readOnly: true,
+  description: "List a layer's Layer-panel ruler guides with orientation and position (AE 16.1+).",
+  params: [
+    { name: "comp", type: "any", description: "Comp name or id", required: true },
+    {
+      name: "layer",
+      type: "any",
+      description: "1-based layer index, or the layer name",
+      required: true,
+    },
+  ],
+  toJsx(args) {
+    return `
+            ${jsxCompLayerPreamble(args)}
+            var _guides = null;
+            try { _guides = _layer.guides; } catch (eG) {}
+            if (!_guides) return { ok: false, error: "layer guides need AE 16.1+" };
+            var _out = [];
+            for (var _i = 0; _i < _guides.length; _i++) {
+                _out.push({ index: _i, orientation: _guides[_i].orientationType === 1 ? "vertical" : "horizontal", position: _guides[_i].position });
+            }
+            return { ok: true, count: _out.length, guides: _out };
+        `;
+  },
+});
