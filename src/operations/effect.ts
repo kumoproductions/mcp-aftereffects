@@ -150,3 +150,144 @@ registerOp({
         `;
   },
 });
+
+registerOp({
+  name: "effect.move",
+  category: "effect",
+  description:
+    "Reorder an effect within a layer's effect stack (PropertyBase.moveTo). Effect order changes the render result.",
+  params: [
+    { name: "comp", type: "any", description: "Comp name or id", required: true },
+    {
+      name: "layer",
+      type: "any",
+      description: "1-based layer index, or the layer name",
+      required: true,
+    },
+    {
+      name: "effectIndex",
+      type: "number",
+      description: "1-based index of the effect to move",
+      required: true,
+    },
+    {
+      name: "toIndex",
+      type: "number",
+      description: "1-based target position in the stack",
+      required: true,
+    },
+  ],
+  toJsx(args) {
+    return `
+            ${jsxCompLayerPreamble(args)}
+            var _fx = _layer.property("Effects");
+            if (!_fx) return { ok: false, error: "layer has no Effects group" };
+            var _from = ${jsxVal(args.effectIndex)};
+            var _to = ${jsxVal(args.toIndex)};
+            if (_from < 1 || _from > _fx.numProperties) return { ok: false, error: "effectIndex out of range (1-" + _fx.numProperties + ")" };
+            if (_to < 1 || _to > _fx.numProperties) return { ok: false, error: "toIndex out of range (1-" + _fx.numProperties + ")" };
+            try { _fx.property(_from).moveTo(_to); } catch (eMv) { return { ok: false, error: "moveTo failed: " + AE.errText(eMv) }; }
+            var _order = [];
+            for (var _i = 1; _i <= _fx.numProperties; _i++) _order.push(_fx.property(_i).name);
+            return { ok: true, order: _order };
+        `;
+  },
+});
+
+/**
+ * Locate the Menu property of a Dropdown Menu Control effect into `_menu`.
+ * Expects `_layer`; effect addressed by 1-based index or name in `_fxArg`.
+ */
+const DROPDOWN_MENU_LOOKUP_JSX = `
+    var _fx = _layer.property("Effects");
+    if (!_fx) return { ok: false, error: "layer has no Effects group" };
+    var _eff = null;
+    try { _eff = _fx.property(_fxArg); } catch (eEf) {}
+    if (!_eff) return { ok: false, error: "no effect matching " + _fxArg };
+    var _menu = null;
+    for (var _mi = 1; _mi <= _eff.numProperties; _mi++) {
+        var _cand = _eff.property(_mi);
+        var _isDd = false;
+        try { _isDd = (_cand.isDropdownEffect === true); } catch (eDd) {}
+        if (_isDd) { _menu = _cand; break; }
+    }
+    if (!_menu) return { ok: false, error: "effect '" + _eff.name + "' has no dropdown menu property — is it a Dropdown Menu Control (ADBE Dropdown Control)? (needs AE 17.0.1+)" };
+`;
+
+registerOp({
+  name: "effect.set_dropdown_items",
+  category: "effect",
+  description:
+    'Set the menu items of a Dropdown Menu Control effect (Property.setPropertyParameters, AE 17.0.1+) — the key API for MOGRT dropdowns. Item strings must be unique; "-" inserts a separator. NOTE: AE re-creates the control, invalidating prior references to it.',
+  params: [
+    { name: "comp", type: "any", description: "Comp name or id", required: true },
+    {
+      name: "layer",
+      type: "any",
+      description: "1-based layer index, or the layer name",
+      required: true,
+    },
+    {
+      name: "effect",
+      type: "any",
+      description: "1-based effect index or effect name (a Dropdown Menu Control)",
+      required: true,
+    },
+    {
+      name: "items",
+      type: "array",
+      description: 'Menu item strings, e.g. ["Red", "Green", "-", "Custom"]',
+      required: true,
+    },
+  ],
+  toJsx(args) {
+    return `
+            ${jsxCompLayerPreamble(args)}
+            var _fxArg = ${jsxVal(args.effect)};
+            ${DROPDOWN_MENU_LOOKUP_JSX}
+            var _items = ${jsxVal(args.items)};
+            var _newMenu = null;
+            try { _newMenu = _menu.setPropertyParameters(_items); } catch (eSp) { return { ok: false, error: "setPropertyParameters failed: " + AE.errText(eSp) }; }
+            var _read = null;
+            try { _read = AE.valueToJson((_newMenu || _menu).propertyParameters); } catch (ePp) {}
+            return { ok: true, effect: _eff.name, itemCount: _items.length, propertyParameters: _read };
+        `;
+  },
+});
+
+registerOp({
+  name: "effect.get_dropdown_items",
+  category: "effect",
+  readOnly: true,
+  description:
+    "Read a Dropdown Menu Control's items (Property.propertyParameters, AE 26.0+), current 1-based selection, and its text (valueText).",
+  params: [
+    { name: "comp", type: "any", description: "Comp name or id", required: true },
+    {
+      name: "layer",
+      type: "any",
+      description: "1-based layer index, or the layer name",
+      required: true,
+    },
+    {
+      name: "effect",
+      type: "any",
+      description: "1-based effect index or effect name (a Dropdown Menu Control)",
+      required: true,
+    },
+  ],
+  toJsx(args) {
+    return `
+            ${jsxCompLayerPreamble(args)}
+            var _fxArg = ${jsxVal(args.effect)};
+            ${DROPDOWN_MENU_LOOKUP_JSX}
+            return {
+                ok: true,
+                effect: _eff.name,
+                value: AE.safeGet(function () { return _menu.value; }, null),
+                valueText: AE.safeGet(function () { return _menu.valueText; }, null),
+                items: AE.safeGet(function () { return AE.valueToJson(_menu.propertyParameters); }, null)
+            };
+        `;
+  },
+});
