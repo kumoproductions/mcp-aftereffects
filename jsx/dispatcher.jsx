@@ -366,8 +366,21 @@
         var undoLabel = "mcp-aftereffects: " + (request.label || "action");
         var wantUndoGroup = (request.undoGroup !== false);
         var undoOpen = false;
+        var dialogsSuppressed = false;
         response.phase = "execute";
         try {
+            // Suppress modal alerts for the duration of the request. try/catch
+            // inside the executed code cannot stop everything: project.open on
+            // an AEP with missing footage/fonts, or an effect raising its own
+            // warning, pops a modal that blocks every later `-r` launch until a
+            // human clicks OK. Suppression MUST be undone in the finally below —
+            // left on, it would silently eat dialogs for the user's whole
+            // interactive session.
+            try {
+                app.beginSuppressDialogs();
+                dialogsSuppressed = true;
+            } catch (eSup) { /* unavailable — run with dialogs enabled */ }
+
             if (wantUndoGroup) {
                 app.beginUndoGroup(undoLabel);
                 undoOpen = true;
@@ -396,6 +409,12 @@
         } finally {
             if (undoOpen) {
                 try { app.endUndoGroup(); } catch (eEnd) { /* ignore */ }
+            }
+            if (dialogsSuppressed) {
+                // false: do NOT replay the suppressed alerts — that replay is
+                // itself a modal, the exact thing being prevented. Whatever was
+                // suppressed is already reported through response.error/logs.
+                try { app.endSuppressDialogs(false); } catch (eEndSup) { /* ignore */ }
             }
         }
 
