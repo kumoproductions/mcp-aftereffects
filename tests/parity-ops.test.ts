@@ -38,6 +38,95 @@ describe("project.find_layers type filter", () => {
   });
 });
 
+describe("mask.set_props extended attributes", () => {
+  it("sets MaskPropertyGroup attributes and maps the enums", () => {
+    const op = getOp("mask.set_props");
+    const jsx = op!.toJsx({
+      comp: "Main",
+      layer: 1,
+      maskIndex: 1,
+      inverted: true,
+      rotoBezier: true,
+      motionBlur: "on",
+      featherFalloff: "linear",
+    });
+    expect(jsx).toContain("_mask.inverted = true");
+    expect(jsx).toContain("_mask.rotoBezier = true");
+    expect(jsx).toContain("MaskMotionBlur.ON");
+    expect(jsx).toContain("MaskFeatherFalloff.FFO_LINEAR");
+  });
+
+  it("emits no attribute sets when only classic params are passed", () => {
+    const op = getOp("mask.set_props");
+    const jsx = op!.toJsx({ comp: "Main", layer: 1, maskIndex: 1, opacity: 50 });
+    expect(jsx).not.toContain("_mask.inverted");
+    expect(jsx).toContain("ADBE Mask Opacity");
+  });
+});
+
+describe("mask.set_path variable-width feather", () => {
+  it("requires the three point arrays to agree and pads the optional ones", () => {
+    const op = getOp("mask.set_path");
+    const jsx = op!.toJsx({
+      comp: "Main",
+      layer: 1,
+      maskIndex: 1,
+      vertices: [
+        [0, 0],
+        [100, 0],
+        [100, 100],
+      ],
+      featherSegLocs: [0, 1],
+      featherRelSegLocs: [0.5, 0.5],
+      featherRadii: [20, -10],
+    });
+    expect(jsx).toContain("featherSegLocs");
+    expect(jsx).toContain("must all be present with the same length");
+    expect(jsx).toContain("_padded(");
+  });
+
+  it("emits no feather code when unused", () => {
+    const op = getOp("mask.set_path");
+    const jsx = op!.toJsx({ comp: "Main", layer: 1, maskIndex: 1, vertices: [[0, 0]] });
+    expect(jsx).not.toContain("featherSegLocs");
+  });
+});
+
+describe("marker cue point fields", () => {
+  it("marker.add_comp writes cue point name, type, and parameters", () => {
+    const op = getOp("marker.add_comp");
+    const jsx = op!.toJsx({
+      comp: "Main",
+      time: 1,
+      comment: "cue",
+      cuePointName: "scene1",
+      eventCuePoint: true,
+      params: { speaker: "A" },
+    });
+    expect(jsx).toContain('_mv.cuePointName = "scene1"');
+    expect(jsx).toContain("_mv.eventCuePoint = true");
+    expect(jsx).toContain("setParameters");
+  });
+
+  it("marker.update accepts frameTarget alongside url", () => {
+    const op = getOp("marker.update");
+    const jsx = op!.toJsx({
+      comp: "Main",
+      keyIndex: 1,
+      url: "https://example.com",
+      frameTarget: "_blank",
+    });
+    expect(jsx).toContain('_mv.frameTarget = "_blank"');
+  });
+
+  it("marker.list surfaces the cue point fields", () => {
+    const op = getOp("marker.list");
+    const jsx = op!.toJsx({ comp: "Main" });
+    expect(jsx).toContain("cuePointName");
+    expect(jsx).toContain("getParameters");
+  });
+});
+
 describe("layer.set_props enum coercion", () => {
   it("routes every assignment through AE.coerceLayerPropValue", () => {
     const op = getOp("layer.set_props");
