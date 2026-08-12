@@ -786,7 +786,12 @@ registerOp({
                 var _cur = _fo.designVector;
                 for (var _i = 0; _i < _data.length; _i++) _vec.push(_cur[_i]);
             } catch (eCv) {
-                for (var _i2 = 0; _i2 < _data.length; _i2++) _vec.push(_data[_i2].min);
+                // designVector unavailable — each axis keeps its documented
+                // default. Subscripted: \`default\` is a reserved word in ES3.
+                for (var _i2 = 0; _i2 < _data.length; _i2++) {
+                    var _dflt = _data[_i2]["default"];
+                    _vec.push(typeof _dflt === "number" ? _dflt : _data[_i2].min);
+                }
             }
             var _w = [];
             var _known = {};
@@ -1032,6 +1037,11 @@ registerOp({
             var _sStart = ${jsxVal(args.sourceStart)};
             var _sEnd = ${jsxVal(args.sourceEnd ?? null)};
             if (_sEnd === null) _sEnd = _srcDoc.text.length;
+            // pasteFrom on overlapping ranges of the SAME document mutates the
+            // source while it is being read — refuse instead of corrupting.
+            if (_srcDoc === _tgtDoc && _sStart < _tEnd && _tStart < _sEnd) {
+                return { ok: false, error: "source and target ranges overlap in the same text document — use non-overlapping ranges or a separate source layer" };
+            }
             var _tgt = null;
             var _src = null;
             try {

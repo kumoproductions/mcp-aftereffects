@@ -28,6 +28,15 @@ export interface EvalRequest {
    * revert nothing the caller asked for and desynchronize the stack.
    */
   undoGroup?: boolean;
+  /**
+   * Suppress AE's modal alert dialogs for the duration of the call (default
+   * true). Pass false only for code that drives the undo stack — Undo and
+   * Redo — because beginSuppressDialogs opens an undo-transaction-like scope
+   * those would resolve against. Decided separately from `undoGroup`: project
+   * boundary calls (project.open / project.new) run ungrouped but KEEP
+   * suppression — they are the calls most likely to pop a modal.
+   */
+  suppressDialogs?: boolean;
   /** Per-call timeout in milliseconds. */
   timeoutMs?: number;
 }

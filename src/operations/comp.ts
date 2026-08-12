@@ -125,7 +125,7 @@ registerOp({
             var _arg = ${jsxVal(args.renderer)};
             var _target = _friendly.hasOwnProperty(_arg) ? _friendly[_arg] : _arg;
             if (!_has.hasOwnProperty(_target)) return { ok: false, error: "renderer '" + _target + "' not available — installed: " + _avail.join(", ") };
-            _comp.renderer = _target;
+            try { _comp.renderer = _target; } catch (eRd) { return { ok: false, error: "renderer set failed: " + AE.errText(eRd) }; }
             return { ok: true, renderer: _comp.renderer, renderers: AE.valueToJson(_avail) };
         `;
   },

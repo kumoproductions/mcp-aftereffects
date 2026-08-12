@@ -804,14 +804,23 @@ registerOp({
     { name: "seed", type: "number", description: "Random seed", required: false },
   ],
   toJsx(args) {
+    // Hoisted out of the main template: the lint's template scanner cannot see
+    // through raw braces inside a `${…}` interpolation.
+    const wigglerXfJsx =
+      args.position === undefined && args.scale === undefined && args.rotation === undefined
+        ? ""
+        : `var _wxf = _wt.property("ADBE Vector Wiggler Transform");
+            if (!_wxf) return { ok: false, error: "no 'ADBE Vector Wiggler Transform' group on the added Wiggle Transform" };`;
     return `
             ${jsxCompLayerPreamble(args)}
             ${jsxShapeGroupPreamble(args)}
-            var _wt = _grp.property("Contents").addProperty("ADBE Vector Filter - Wiggler");
+            var _contents = _grp.property("Contents");
+            if (!_contents) return { ok: false, error: "shape group '" + _grp.name + "' has no Contents group" };
+            var _wt = _contents.addProperty("ADBE Vector Filter - Wiggler");
             _wt.property("ADBE Vector Xform Temporal Freq").setValue(${jsxVal(args.wigglesPerSecond ?? 2)});
             ${args.correlation !== undefined ? `_wt.property("ADBE Vector Correlation").setValue(${jsxVal(args.correlation)});` : ""}
             ${args.seed !== undefined ? `_wt.property("ADBE Vector Random Seed").setValue(${jsxVal(args.seed)});` : ""}
-            var _wxf = _wt.property("ADBE Vector Wiggler Transform");
+            ${wigglerXfJsx}
             ${args.position !== undefined ? `_wxf.property("ADBE Vector Wiggler Position").setValue(${jsxVal(args.position)});` : ""}
             ${args.scale !== undefined ? `_wxf.property("ADBE Vector Wiggler Scale").setValue(${jsxVal(args.scale)});` : ""}
             ${args.rotation !== undefined ? `_wxf.property("ADBE Vector Wiggler Rotation").setValue(${jsxVal(args.rotation)});` : ""}

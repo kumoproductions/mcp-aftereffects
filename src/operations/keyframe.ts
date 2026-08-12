@@ -517,6 +517,7 @@ registerOp({
             ${jsxCompLayerPreamble(args)}
             var _propPath = ${jsxVal(args.property)};
             ${jsxPropertyLookup()}
+            if (_node.propertyType !== PropertyType.PROPERTY) return { ok: false, error: "property path must resolve to a Property" };
             var _ki = ${jsxVal(args.keyIndex)};
             if (_ki < 1 || _ki > _node.numKeys) return { ok: false, error: "key index out of range" };
             var _w = [];
@@ -579,6 +580,7 @@ registerOp({
             ${jsxCompLayerPreamble(args)}
             var _propPath = ${jsxVal(args.property)};
             ${jsxPropertyLookup()}
+            if (_node.propertyType !== PropertyType.PROPERTY) return { ok: false, error: "property path must resolve to a Property" };
             var _ki = ${jsxVal(args.keyIndex)};
             if (_ki < 1 || _ki > _node.numKeys) return { ok: false, error: "key index out of range" };
             if (typeof _node.setLabelAtKey !== "function") return { ok: false, error: "setLabelAtKey needs AE 22.6+" };
@@ -620,6 +622,7 @@ registerOp({
             ${jsxCompLayerPreamble(args)}
             var _propPath = ${jsxVal(args.property)};
             ${jsxPropertyLookup()}
+            if (_node.propertyType !== PropertyType.PROPERTY) return { ok: false, error: "property path must resolve to a Property" };
             var _kiArg = ${jsxVal(args.keyIndex)};
             var _sel = ${jsxVal(args.selected)};
             var _touched = 0;

@@ -108,16 +108,34 @@ registerOp({
   toJsx(args) {
     // The three feather-point arrays travel together; AE rejects a Shape whose
     // feather arrays disagree in length, so pad the optional ones to match.
+    // Any feather-related array activates the validation — a call carrying
+    // only auxiliary arrays (types, tensions, …) without the three core ones
+    // must be rejected, not silently ignored.
     // Hoisted out of the main template: the lint's template scanner cannot see
     // through raw braces inside a `${…}` interpolation.
-    const featherJsx =
-      args.featherSegLocs === undefined
-        ? ""
-        : `
+    const hasFeather = [
+      args.featherSegLocs,
+      args.featherRelSegLocs,
+      args.featherRadii,
+      args.featherInterps,
+      args.featherTensions,
+      args.featherTypes,
+      args.featherRelCornerAngles,
+    ].some((a) => a !== undefined);
+    // The read-back proves the feather survived setValue. Hoisted for the same
+    // scanner reason as featherJsx.
+    const returnJsx = !hasFeather
+      ? `return { ok: true, maskIndex: ${jsxVal(args.maskIndex)} };`
+      : `var _fpApplied = null;
+            try { _fpApplied = _mask.property("ADBE Mask Shape").value.featherSegLocs.length; } catch (eFp) {}
+            return { ok: true, maskIndex: ${jsxVal(args.maskIndex)}, featherPoints: _fpApplied };`;
+    const featherJsx = !hasFeather
+      ? ""
+      : `
             var _fSeg = ${jsxVal(args.featherSegLocs)};
             var _fRel = ${jsxVal(args.featherRelSegLocs)};
             var _fRad = ${jsxVal(args.featherRadii)};
-            if (!_fRel || !_fRad || _fSeg.length !== _fRel.length || _fSeg.length !== _fRad.length) {
+            if (!_fSeg || !_fRel || !_fRad || _fSeg.length !== _fRel.length || _fSeg.length !== _fRad.length) {
                 return { ok: false, error: "featherSegLocs, featherRelSegLocs and featherRadii must all be present with the same length" };
             }
             function _padded(arr, n) {
@@ -144,7 +162,7 @@ registerOp({
             ${args.outTangents ? `_shape.outTangents = ${jsxVal(args.outTangents)};` : ""}
             ${featherJsx}
             _mask.property("ADBE Mask Shape").setValue(_shape);
-            return { ok: true, maskIndex: ${jsxVal(args.maskIndex)} };
+            ${returnJsx}
         `;
   },
 });

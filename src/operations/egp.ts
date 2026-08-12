@@ -234,16 +234,21 @@ registerOp({
             try { _can = _layer.canAddToMotionGraphicsTemplate(_master); } catch (eCan) {}
             if (!_can) return { ok: false, error: "layer '" + _layer.name + "' cannot be added to the Essential Graphics panel of '" + _master.name + "' — only AVLayers with footage/comp sources qualify for media replacement" };
             var _name = ${jsxVal(args.controllerName ?? null)};
+            var _added = false;
+            var _namedAs = false;
             try {
                 if (_name !== null && typeof _layer.addToMotionGraphicsTemplateAs === "function") {
-                    _layer.addToMotionGraphicsTemplateAs(_master, _name);
+                    _added = _layer.addToMotionGraphicsTemplateAs(_master, _name);
+                    _namedAs = _added === true;
                 } else {
-                    _layer.addToMotionGraphicsTemplate(_master);
+                    _added = _layer.addToMotionGraphicsTemplate(_master);
                 }
             } catch (eAdd) { return { ok: false, error: "addToMotionGraphicsTemplate failed: " + AE.errText(eAdd) }; }
             var _count = null;
             try { _count = _master.motionGraphicsTemplateControllerCount; } catch (eCnt) {}
-            return { ok: true, layer: _layer.name, masterComp: _master.name, controllerCount: _count };
+            var _res = { ok: _added === true, layer: _layer.name, masterComp: _master.name, controllerCount: _count };
+            if (_name !== null && !_namedAs) _res.warning = "controllerName ignored (addToMotionGraphicsTemplateAs unavailable on this AE) — added under its default name";
+            return _res;
         `;
   },
 });

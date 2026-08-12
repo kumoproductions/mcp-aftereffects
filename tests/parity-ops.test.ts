@@ -24,8 +24,13 @@ describe("layer.set_track_matte (AE 23.0 semantics)", () => {
     const op = getOp("layer.set_track_matte");
     expect(op).toBeTruthy();
     const jsx = op!.toJsx({ comp: "Main", layer: 2, matteLayer: "matte src", matteType: "luma" });
-    expect(jsx).toContain('AE.findLayerInComp(_comp, "matte src")');
+    expect(jsx).toContain('var _matteArg = "matte src"');
+    expect(jsx).toContain("AE.findLayerInComp(_comp, _matteArg)");
     expect(jsx).toContain("setTrackMatte");
+    // A non-none matteType without a matte layer must fail with a clear
+    // message instead of a null lookup.
+    const missing = op!.toJsx({ comp: "Main", layer: 2, matteType: "luma" });
+    expect(missing).toContain("matteLayer is required when matteType is not 'none'");
   });
 
   it("does not require a matte layer when removing", () => {
@@ -99,6 +104,19 @@ describe("mask.set_path variable-width feather", () => {
     const op = getOp("mask.set_path");
     const jsx = op!.toJsx({ comp: "Main", layer: 1, maskIndex: 1, vertices: [[0, 0]] });
     expect(jsx).not.toContain("featherSegLocs");
+  });
+
+  it("rejects auxiliary feather arrays without the three core ones", () => {
+    // featherTypes alone must trip the validation, not be silently dropped.
+    const jsx = getOp("mask.set_path")!.toJsx({
+      comp: "Main",
+      layer: 1,
+      maskIndex: 1,
+      vertices: [[0, 0]],
+      featherTypes: [0, 1],
+    });
+    expect(jsx).toContain("must all be present with the same length");
+    expect(jsx).toContain("!_fSeg");
   });
 });
 
@@ -313,9 +331,17 @@ describe("render queue raw settings and per-item control", () => {
   it("render.get_settings reads both levels with a format switch", () => {
     const op = getOp("render.get_settings");
     expect(op!.readOnly).toBe(true);
-    const jsx = op!.toJsx({ format: "all" });
-    expect(jsx).toContain("GetSettingsFormat.STRING");
-    expect(jsx).toContain("outputModule(_o)");
+    // Both enum names appear in every generated script (the switch is a
+    // runtime ternary), so assert the embedded format argument that drives it.
+    const all = op!.toJsx({ format: "all" });
+    expect(all).toContain(
+      '"all" === "all" ? GetSettingsFormat.STRING : GetSettingsFormat.STRING_SETTABLE',
+    );
+    expect(all).toContain("outputModule(_o)");
+    const settable = op!.toJsx({});
+    expect(settable).toContain(
+      '"settable" === "all" ? GetSettingsFormat.STRING : GetSettingsFormat.STRING_SETTABLE',
+    );
   });
 
   it("render.set_settings / set_om_settings pass the map through setSettings", () => {
@@ -659,8 +685,8 @@ describe("app-config consent gate", () => {
     const actual = listOps()
       .filter((o) => o.appConfig)
       .map((o) => o.name)
-      .sort();
-    expect(actual).toEqual([...FLAGGED].sort());
+      .toSorted();
+    expect(actual).toEqual(FLAGGED.toSorted());
   });
 
   it("ae_do refuses confirm:false with FORBIDDEN and passes confirm:true through", async () => {
@@ -798,7 +824,16 @@ describe("low-priority parity ops", () => {
   });
 
   it("text.reset_style scopes to character, paragraph, or both", () => {
-    const jsx = getOp("text.reset_style")!.toJsx({ comp: "Main", layer: 1, scope: "character" });
+    const op = getOp("text.reset_style")!;
+    // Scope dispatch happens at runtime, so both branch bodies are always in
+    // the generated code — what varies is the embedded scope value driving
+    // the two conditions.
+    for (const scope of ["character", "paragraph", "both"]) {
+      expect(op.toJsx({ comp: "Main", layer: 1, scope })).toContain(`var _scope = "${scope}"`);
+    }
+    const jsx = op.toJsx({ comp: "Main", layer: 1, scope: "character" });
+    expect(jsx).toContain('if (_scope === "character" || _scope === "both")');
+    expect(jsx).toContain('if (_scope === "paragraph" || _scope === "both")');
     expect(jsx).toContain("resetCharStyle");
     expect(jsx).toContain("resetParagraphStyle");
   });
@@ -832,25 +867,21 @@ describe("low-priority parity ops", () => {
     expect(om).toContain("outputModule(2)");
   });
 
-  it("layer.calculate_transform applies only when asked", () => {
-    const dry = getOp("layer.calculate_transform")!.toJsx({
+  it("layer.calculate_transform is calculation-only, honoring its readOnly flag", () => {
+    const op = getOp("layer.calculate_transform")!;
+    expect(op.readOnly).toBe(true);
+    // No apply path: a readOnly op must never mutate — applying the result is
+    // delegated to property.set / layer.set_props.
+    expect(op.params.some((p) => p.name === "apply")).toBe(false);
+    const jsx = op.toJsx({
       comp: "Main",
       layer: 1,
       topLeft: [0, 0, 0],
       topRight: [100, 0, 0],
       bottomLeft: [0, 100, 0],
     });
-    expect(dry).toContain("calculateTransformFromPoints([0,0,0], [100,0,0], [0,100,0])");
-    expect(dry).not.toContain("_setXf");
-    const wet = getOp("layer.calculate_transform")!.toJsx({
-      comp: "Main",
-      layer: 1,
-      topLeft: [0, 0, 0],
-      topRight: [100, 0, 0],
-      bottomLeft: [0, 100, 0],
-      apply: true,
-    });
-    expect(wet).toContain('_setXf("X Rotation"');
+    expect(jsx).toContain("calculateTransformFromPoints([0,0,0], [100,0,0], [0,100,0])");
+    expect(jsx).not.toContain("setValue");
   });
 
   it("egp.open_in_panel and render queueNotify exist", () => {

@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { getOp, wantsUndoGroup } from "../src/registry.js";
+import { getOp, wantsDialogSuppression, wantsUndoGroup } from "../src/registry.js";
 import { doTool } from "../src/tools/do.js";
 import "../src/operations/index.js";
 import { nullTransport } from "./helpers/null-transport.js";
@@ -74,6 +74,37 @@ describe("ae_do", () => {
   });
 });
 
+describe("dialog suppression", () => {
+  it("only undo/redo opt out; project boundary ops keep suppression", () => {
+    expect(wantsDialogSuppression(getOp("project.undo")!, {})).toBe(false);
+    const cmd = getOp("command.execute")!;
+    expect(wantsDialogSuppression(cmd, { id: 16 })).toBe(false);
+    expect(wantsDialogSuppression(cmd, { id: 2035 })).toBe(false);
+    expect(wantsDialogSuppression(cmd, { id: 2040 })).toBe(true);
+    // project.open / project.new run ungrouped, but they are the calls most
+    // likely to pop a modal (missing footage/fonts) — they stay suppressed.
+    for (const name of ["project.open", "project.new", "layer.create_null"]) {
+      expect(wantsDialogSuppression(getOp(name)!, {}), name).toBe(true);
+    }
+  });
+
+  it("ae_do sends undoGroup:false but suppressDialogs:true for project.open", async () => {
+    const transport = nullTransport(OK_RESPONSE);
+    await doTool.handler(
+      { operation: "project.open", args: { path: "C:/missing.aep" } },
+      transport,
+    );
+    expect(transport.calls[0].undoGroup).toBe(false);
+    expect(transport.calls[0].suppressDialogs).toBe(true);
+  });
+
+  it("ae_do sends suppressDialogs:false for undo", async () => {
+    const transport = nullTransport(OK_RESPONSE);
+    await doTool.handler({ operation: "project.undo", args: {} }, transport);
+    expect(transport.calls[0].suppressDialogs).toBe(false);
+  });
+});
+
 describe("batch.run", () => {
   it("refuses an undo child rather than running it inside the batch's group", () => {
     const jsx = getOp("batch.run")!.toJsx({
@@ -106,15 +137,11 @@ describe("dispatcher", () => {
   it("opens an undo group only when the request asks for one", () => {
     expect(DISPATCHER).toContain("request.undoGroup !== false");
     // One call site, and it sits inside the guard — an unguarded second one
-    // would silently re-group undo/redo. The guard block also carries the
-    // dialog-suppression calls, so match "inside the if-block" structurally:
-    // no `} ... else` or new statement dedent between guard and call, just
-    // whatever suppression lines precede it without closing the block.
+    // would silently re-group undo/redo. Match "inside the if-block"
+    // structurally: braces must stay balanced-open between guard and call.
     expect(DISPATCHER.match(/app\.beginUndoGroup\(/g)).toHaveLength(1);
     const guardBlock = /if \(wantUndoGroup\) \{([\s\S]*?)app\.beginUndoGroup\(/.exec(DISPATCHER);
     expect(guardBlock, "beginUndoGroup must come after the wantUndoGroup guard").toBeTruthy();
-    // Between the guard and the call, braces must stay balanced-open (the
-    // try/catch around beginSuppressDialogs is fine; a closed guard is not).
     const between = guardBlock?.[1] ?? "";
     const opens = (between.match(/\{/g) ?? []).length;
     const closes = (between.match(/\}/g) ?? []).length;
@@ -124,14 +151,19 @@ describe("dispatcher", () => {
     ).toBeGreaterThanOrEqual(closes);
   });
 
-  it("suppresses dialogs only for grouped requests, never for undo/redo", () => {
+  it("decides dialog suppression separately from the undo group", () => {
     // beginSuppressDialogs opens an undo-transaction-like scope of its own:
     // wrapping the bare undo/redo requests in it makes AE resolve Undo against
-    // that scope (nothing reverts, async "UndoGroup Mismatch" dialogs). The
-    // suppression call must live inside the same wantUndoGroup guard.
+    // that scope (nothing reverts, async "UndoGroup Mismatch" dialogs). But
+    // project boundary requests (project.open / project.new) run ungrouped AND
+    // suppressed — they are the calls most likely to pop a modal — so the
+    // decision is its own request field, not the undo-group condition.
     expect(DISPATCHER.match(/app\.beginSuppressDialogs\(\)/g)).toHaveLength(1);
-    const guard = /if \(wantUndoGroup\) \{([\s\S]*?)app\.beginUndoGroup\(/.exec(DISPATCHER);
-    expect(guard?.[1]).toContain("beginSuppressDialogs");
+    const guard = /if \(wantSuppress\) \{([\s\S]*?)app\.beginSuppressDialogs\(\)/.exec(DISPATCHER);
+    expect(guard, "beginSuppressDialogs must sit behind the wantSuppress guard").toBeTruthy();
+    // A request without the field falls back to the old contract (suppress
+    // exactly when grouping), so an old server cannot break undo/redo.
+    expect(DISPATCHER).toContain('typeof request.suppressDialogs === "boolean"');
     // And it must always be released, without replaying the queued alerts.
     expect(DISPATCHER).toContain("endSuppressDialogs(false)");
   });

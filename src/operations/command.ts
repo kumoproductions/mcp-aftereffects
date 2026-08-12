@@ -23,6 +23,9 @@ registerOp({
   // to that group and the requested step survives. Everything else groups
   // normally, so one Ctrl+Z still reverts one call.
   undoGroup: (args) => !isUndoRedoCommandId(args.id),
+  // Same pair: dialog suppression opens an undo-transaction-like scope that
+  // Undo/Redo would resolve against, so they skip it too.
+  suppressDialogs: (args) => !isUndoRedoCommandId(args.id),
   toJsx(args) {
     return `
             app.executeCommand(${jsxVal(args.id)});

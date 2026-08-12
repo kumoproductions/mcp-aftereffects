@@ -128,7 +128,9 @@ registerOp({
   // resolves each Undo against the group that is still open: the previous
   // call — the one the caller wants back — is never reverted, and the group
   // this call closes afterwards leaves the stack out of step with the project.
+  // Dialog suppression opens the same kind of scope, so it opts out of both.
   undoGroup: () => false,
+  suppressDialogs: () => false,
   toJsx(args) {
     // Menu command ID (see command.list / hyperbrew command-ID table): 16 = Undo.
     return `
@@ -638,8 +640,8 @@ registerOp({
                 linearizeWorkingSpace: AE.safeGet(function () { return _p.linearizeWorkingSpace; }, null),
                 compensateForSceneReferredProfiles: AE.safeGet(function () { return _p.compensateForSceneReferredProfiles; }, null),
                 displayStartFrame: AE.safeGet(function () { return _p.displayStartFrame; }, null),
-                feetFramesFilmType: AE.safeGet(function () { return _p.feetFramesFilmType === FeetFramesFilmType.MM16 ? "mm16" : "mm35"; }, null),
-                footageTimecodeDisplayStartType: AE.safeGet(function () { return _p.footageTimecodeDisplayStartType === FootageTimecodeDisplayStartType.FTCS_START_0 ? "start0" : "useSourceMedia"; }, null)
+                feetFramesFilmType: AE.safeGet(function () { var _ff = _p.feetFramesFilmType; if (_ff === FeetFramesFilmType.MM16) return "mm16"; if (_ff === FeetFramesFilmType.MM35) return "mm35"; return String(_ff); }, null),
+                footageTimecodeDisplayStartType: AE.safeGet(function () { var _ft = _p.footageTimecodeDisplayStartType; if (_ft === FootageTimecodeDisplayStartType.FTCS_START_0) return "start0"; if (_ft === FootageTimecodeDisplayStartType.FTCS_USE_SOURCE_MEDIA) return "useSourceMedia"; return String(_ft); }, null)
             };
             if (${jsxVal(!!args.includeColorProfiles)}) {
                 try { _out.colorProfiles = _p.listColorProfiles(); } catch (eCp) { _out.colorProfiles = null; }
@@ -829,8 +831,10 @@ registerOp({
 /** Friendly-name → ToolType member table, built probe-guarded at runtime. */
 const TOOL_MAP_JSX = `
     var _tools = {};
+    var _missingTools = {};
     function _addTool(name, member) {
-        try { if (ToolType[member] !== undefined) _tools[name] = ToolType[member]; } catch (eT) {}
+        try { if (ToolType[member] !== undefined) { _tools[name] = ToolType[member]; return; } } catch (eT) {}
+        _missingTools[name] = member;
     }
     _addTool("selection", "Tool_Arrow"); _addTool("rotate", "Tool_Rotate");
     _addTool("hand", "Tool_Hand"); _addTool("zoom", "Tool_Magnify");
@@ -881,7 +885,10 @@ registerOp({
     return `
             ${TOOL_MAP_JSX}
             var _arg = ${jsxVal(args.tool)};
-            if (!_tools.hasOwnProperty(_arg)) return { ok: false, error: "unknown tool '" + _arg + "'" };
+            if (!_tools.hasOwnProperty(_arg)) {
+                if (_missingTools.hasOwnProperty(_arg)) return { ok: false, error: "tool '" + _arg + "' (ToolType." + _missingTools[_arg] + ") is not available on this AE" };
+                return { ok: false, error: "unknown tool '" + _arg + "'" };
+            }
             try { app.project.toolType = _tools[_arg]; } catch (eTt) { return { ok: false, error: "toolType set failed: " + AE.errText(eTt) }; }
             return { ok: true, tool: _toolName(app.project.toolType) };
         `;

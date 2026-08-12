@@ -329,7 +329,8 @@ registerOp({
         : `_comp.layer(${jsxVal(args.parentLayer)})`;
     const assign =
       args.jump === true
-        ? `_layer.setParentWithJump(${parentVal});`
+        ? `if (typeof _layer.setParentWithJump !== "function") return { ok: false, error: "setParentWithJump needs AE 17.1+" };
+            _layer.setParentWithJump(${parentVal});`
         : `_layer.parent = ${parentVal};`;
     return `
             ${jsxCompLayerPreamble(args)}

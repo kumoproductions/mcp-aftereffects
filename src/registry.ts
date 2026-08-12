@@ -57,6 +57,16 @@ export interface Operation {
    * never happened. Those requests run bare instead (see EvalRequest.undoGroup).
    */
   undoGroup?(args: Record<string, unknown>): boolean;
+  /**
+   * Whether the dispatcher may suppress modal alert dialogs around this call.
+   * Omitted means yes. Return false only for calls that drive the undo stack
+   * (Undo/Redo): beginSuppressDialogs opens an undo-transaction-like scope of
+   * its own that those would resolve against. Deliberately separate from
+   * `undoGroup`: project boundary ops (project.open / project.new) run
+   * ungrouped but keep suppression — they are the calls most likely to pop a
+   * modal (missing footage/fonts on open).
+   */
+  suppressDialogs?(args: Record<string, unknown>): boolean;
   /** Generate the JSX code body (function body, ends with `return ...;`). */
   toJsx(args: Record<string, unknown>): string;
 }
@@ -105,6 +115,11 @@ export function listOps(category?: string): Operation[] {
 /** True when `op` may run inside the dispatcher's automatic undo group. */
 export function wantsUndoGroup(op: Operation, args: Record<string, unknown>): boolean {
   return op.undoGroup ? op.undoGroup(args) : true;
+}
+
+/** True when the dispatcher may suppress modal dialogs around `op`. */
+export function wantsDialogSuppression(op: Operation, args: Record<string, unknown>): boolean {
+  return op.suppressDialogs ? op.suppressDialogs(args) : true;
 }
 
 export function listCategories(): string[] {

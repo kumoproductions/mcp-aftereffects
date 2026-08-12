@@ -67,6 +67,18 @@ registerOp({
   },
 });
 
+/** Resolve `_rqi` from an optional queueIndex arg (default: last item). */
+function jsxRqItemPreamble(args: Record<string, unknown>): string {
+  return `
+        var rq = app.project.renderQueue;
+        if (rq.numItems === 0) return { ok: false, error: "render queue is empty" };
+        var _qi = ${jsxVal(args.queueIndex ?? null)};
+        if (_qi === null) _qi = rq.numItems;
+        if (_qi < 1 || _qi > rq.numItems) return { ok: false, error: "queue index out of range (1-" + rq.numItems + ")" };
+        var _rqi = rq.item(_qi);
+    `;
+}
+
 registerOp({
   name: "render.set_output",
   category: "render",
@@ -182,10 +194,12 @@ registerOp({
       );
     if (args.logType !== undefined)
       rqiSets.push(`
-                var _ltMap = { "errorsOnly": LogType.ERRORS_ONLY, "errorsAndSettings": LogType.ERRORS_AND_SETTINGS, "errorsAndPerFrameInfo": LogType.ERRORS_AND_PER_FRAME_INFO };
-                if (_ltMap.hasOwnProperty(${jsxVal(args.logType)})) {
-                    try { _rqi.logType = _ltMap[${jsxVal(args.logType)}]; } catch (eLt) { _w.push("logType: " + AE.errText(eLt)); }
-                } else { _w.push("logType: unknown value " + ${jsxVal(args.logType)}); }
+                try {
+                    var _ltMap = { "errorsOnly": LogType.ERRORS_ONLY, "errorsAndSettings": LogType.ERRORS_AND_SETTINGS, "errorsAndPerFrameInfo": LogType.ERRORS_AND_PER_FRAME_INFO };
+                    if (_ltMap.hasOwnProperty(${jsxVal(args.logType)})) {
+                        _rqi.logType = _ltMap[${jsxVal(args.logType)}];
+                    } else { _w.push("logType: unknown value " + ${jsxVal(args.logType)}); }
+                } catch (eLt) { _w.push("logType: " + AE.errText(eLt)); }
             `);
     if (args.queueItemNotify !== undefined)
       rqiSets.push(
@@ -202,22 +216,19 @@ registerOp({
       );
     if (args.postRenderAction !== undefined)
       omSets.push(`
-                var _praMap = { "none": PostRenderAction.NONE, "import": PostRenderAction.IMPORT, "importAndReplaceUsage": PostRenderAction.IMPORT_AND_REPLACE_USAGE, "setProxy": PostRenderAction.SET_PROXY };
-                if (_praMap.hasOwnProperty(${jsxVal(args.postRenderAction)})) {
-                    try { _om.postRenderAction = _praMap[${jsxVal(args.postRenderAction)}]; } catch (ePa) { _w.push("postRenderAction: " + AE.errText(ePa)); }
-                } else { _w.push("postRenderAction: unknown value " + ${jsxVal(args.postRenderAction)}); }
+                try {
+                    var _praMap = { "none": PostRenderAction.NONE, "import": PostRenderAction.IMPORT, "importAndReplaceUsage": PostRenderAction.IMPORT_AND_REPLACE_USAGE, "setProxy": PostRenderAction.SET_PROXY };
+                    if (_praMap.hasOwnProperty(${jsxVal(args.postRenderAction)})) {
+                        _om.postRenderAction = _praMap[${jsxVal(args.postRenderAction)}];
+                    } else { _w.push("postRenderAction: unknown value " + ${jsxVal(args.postRenderAction)}); }
+                } catch (ePa) { _w.push("postRenderAction: " + AE.errText(ePa)); }
             `);
     if (args.includeSourceXMP !== undefined)
       omSets.push(
         `try { _om.includeSourceXMP = ${jsxVal(args.includeSourceXMP)}; } catch (eXm) { _w.push("includeSourceXMP: " + AE.errText(eXm)); }`,
       );
     return `
-            var rq = app.project.renderQueue;
-            if (rq.numItems === 0) return { ok: false, error: "render queue is empty" };
-            var _qi = ${jsxVal(args.queueIndex ?? null)};
-            if (_qi === null) _qi = rq.numItems;
-            if (_qi < 1 || _qi > rq.numItems) return { ok: false, error: "queue index out of range (1-" + rq.numItems + ")" };
-            var _rqi = rq.item(_qi);
+            ${jsxRqItemPreamble(args)}
             var _w = [];
             ${rqiSets.join("\n")}
             var _om = null;
@@ -236,18 +247,6 @@ registerOp({
         `;
   },
 });
-
-/** Resolve `_rqi` from an optional queueIndex arg (default: last item). */
-function jsxRqItemPreamble(args: Record<string, unknown>): string {
-  return `
-        var rq = app.project.renderQueue;
-        if (rq.numItems === 0) return { ok: false, error: "render queue is empty" };
-        var _qi = ${jsxVal(args.queueIndex ?? null)};
-        if (_qi === null) _qi = rq.numItems;
-        if (_qi < 1 || _qi > rq.numItems) return { ok: false, error: "queue index out of range (1-" + rq.numItems + ")" };
-        var _rqi = rq.item(_qi);
-    `;
-}
 
 registerOp({
   name: "render.get_settings",
@@ -378,7 +377,7 @@ registerOp({
     return `
             ${jsxRqItemPreamble(args)}
             var _compName = _rqi.comp ? _rqi.comp.name : null;
-            _rqi.remove();
+            try { _rqi.remove(); } catch (eRm) { return { ok: false, error: "remove failed: " + AE.errText(eRm) }; }
             return { ok: true, removed: _compName, remaining: rq.numItems };
         `;
   },

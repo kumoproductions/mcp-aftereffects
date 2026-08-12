@@ -234,7 +234,7 @@ describe("e2e: mask parity", () => {
 
   it("mask.set_path accepts variable-width feather points", async (ctx) => {
     if (!ready) return ctx.skip();
-    const res = await o().run<{ ok: boolean }>("mask.set_path", {
+    const res = await o().run<{ ok: boolean; featherPoints: number | null }>("mask.set_path", {
       comp: COMP,
       layer: "mask_solid",
       maskIndex: 1,
@@ -250,7 +250,9 @@ describe("e2e: mask parity", () => {
       featherRadii: [40, -20],
       featherTypes: [0, 1],
     });
-    expect(res).toBeTruthy();
+    // featherPoints is read back from the applied mask shape — 2 proves the
+    // feather configuration survived setValue rather than being ignored.
+    expect(res.featherPoints).toBe(2);
   });
 });
 
@@ -406,13 +408,22 @@ describe("e2e: fonts", () => {
 
   it("font.check_glyphs distinguishes covered from uncovered characters", async (ctx) => {
     if (!ready) return ctx.skip();
+    // The covered/uncovered pair needs a Latin-only font; discover Arial via
+    // font.list (same pattern as the variable-font test below) and skip when
+    // ArialMT is not installed instead of failing on a hardcoded name.
+    const arial = await o().run<{ fonts: Array<{ postScriptName: string | null }> }>("font.list", {
+      familyContains: "Arial",
+      limit: 50,
+    });
+    const ps = arial.fonts.find((f) => f.postScriptName === "ArialMT")?.postScriptName;
+    if (!ps) return ctx.skip();
     const latin = await o().run<{ hasGlyphs: boolean }>("font.check_glyphs", {
-      postScriptName: "ArialMT",
+      postScriptName: ps,
       text: "abc",
     });
     expect(latin.hasGlyphs).toBe(true);
     const cjk = await o().run<{ hasGlyphs: boolean }>("font.check_glyphs", {
-      postScriptName: "ArialMT",
+      postScriptName: ps,
       text: "こんにちは",
     });
     expect(cjk.hasGlyphs, "Arial has no kana glyphs").toBe(false);
@@ -481,7 +492,9 @@ describe("e2e: render queue parity", () => {
     );
     expect(setRes.renderSettings).toBeTruthy();
     const omSettings = got.outputModules[0]?.settings;
-    if (omSettings) {
+    // An empty settings object would derive omKey undefined and send
+    // { undefined: undefined } — only write back when there is a real key.
+    if (omSettings && Object.keys(omSettings).length > 0) {
       const omKey = Object.keys(omSettings)[0];
       const omRes = await o().run<{ settings: Record<string, string> }>("render.set_om_settings", {
         settings: { [omKey as string]: omSettings[omKey as string] },
@@ -942,6 +955,9 @@ describe("e2e: low-priority parity ops", () => {
 
   it("pref.set_setting / get_setting round-trip", async (ctx) => {
     if (!ready) return ctx.skip();
+    // Intentionally left behind: app.settings has no delete API (pref.delete
+    // only reaches app.preferences), and the two-byte "MCP AE E2E / marker"
+    // value in a test-only section is harmless and stable across reruns.
     await o().run("pref.set_setting", {
       section: "MCP AE E2E",
       key: "marker",
@@ -1046,25 +1062,28 @@ describe("e2e: low-priority parity ops", () => {
     expect(prop.selected).toBe(true);
   });
 
-  it("layer.calculate_transform solves and applies a corner placement", async (ctx) => {
+  it("layer.calculate_transform solves a corner placement without touching the layer", async (ctx) => {
     if (!ready) return ctx.skip();
     await o().run("layer.create_solid", { comp: LP, name: "ct_solid", color: [1, 1, 1] });
     await o().run("layer.set_props", { comp: LP, layer: "ct_solid", props: { threeDLayer: true } });
     const res = await o().run<{
       transform: { scale: number[]; position: number[] };
-      applied: boolean;
-      warnings: string[];
     }>("layer.calculate_transform", {
       comp: LP,
       layer: "ct_solid",
       topLeft: [0, 0, 0],
       topRight: [500, 0, 0],
       bottomLeft: [0, 500, 0],
-      apply: true,
     });
-    expect(res.applied).toBe(true);
     expect(res.transform.scale).toBeTruthy();
-    expect(res.warnings).toEqual([]);
+    expect(res.transform.position).toBeTruthy();
+    // The op is calculation-only; applying goes through the ordinary write path.
+    await o().run("property.set", {
+      comp: LP,
+      layer: "ct_solid",
+      property: ["Transform", "Position"],
+      value: res.transform.position,
+    });
   });
 
   it("egp.open_in_panel and render.save_template guard path", async (ctx) => {

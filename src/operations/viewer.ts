@@ -16,6 +16,18 @@ registerOp({
             if (!_v) return { ok: false, error: "no active viewer" };
             var _view = _v.views[_v.activeViewIndex];
             var _opts = _view ? _view.options : null;
+            // Friendly names round-trip into viewer.set_options; unknown enum
+            // values fall through as their raw string form.
+            function _fpName(v) {
+                try {
+                    if (v === FastPreviewType.FP_OFF) return "off";
+                    if (v === FastPreviewType.FP_ADAPTIVE_RESOLUTION) return "adaptiveResolution";
+                    if (v === FastPreviewType.FP_DRAFT) return "draft";
+                    if (v === FastPreviewType.FP_FAST_DRAFT) return "fastDraft";
+                    if (v === FastPreviewType.FP_WIREFRAME) return "wireframe";
+                } catch (eFp) {}
+                return (v === undefined || v === null) ? null : String(v);
+            }
             return {
                 ok: true,
                 type: String(_v.type),
@@ -24,7 +36,7 @@ registerOp({
                 exposure: _opts ? AE.safeGet(function () { return _opts.exposure; }, null) : null,
                 channels: _opts ? AE.safeGet(function () { return String(_opts.channels); }, null) : null,
                 checkerboards: _opts ? AE.safeGet(function () { return _opts.checkerboards; }, null) : null,
-                fastPreview: _opts ? AE.safeGet(function () { return String(_opts.fastPreview); }, null) : null,
+                fastPreview: _opts ? AE.safeGet(function () { return _fpName(_opts.fastPreview); }, null) : null,
                 guidesLocked: _opts ? AE.safeGet(function () { return _opts.guidesLocked; }, null) : null,
                 guidesSnap: _opts ? AE.safeGet(function () { return _opts.guidesSnap; }, null) : null
             };

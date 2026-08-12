@@ -151,7 +151,7 @@ registerOp({
             var _sec = ${jsxVal(args.section)};
             var _key = ${jsxVal(args.key)};
             var _has = false;
-            try { _has = _pt === null ? app.preferences.havePref(_sec, _key) : app.preferences.havePref(_sec, _key, _pt); } catch (eH) {}
+            try { _has = _pt === null ? app.preferences.havePref(_sec, _key) : app.preferences.havePref(_sec, _key, _pt); } catch (eH) { return { ok: false, error: "havePref failed: " + AE.errText(eH) }; }
             if (!_has) return { ok: true, deleted: false, existed: false };
             try { if (_pt === null) app.preferences.deletePref(_sec, _key); else app.preferences.deletePref(_sec, _key, _pt); } catch (eDel) { return { ok: false, error: "deletePref failed: " + AE.errText(eDel) }; }
             try { app.preferences.saveToDisk(); } catch (eD) {}

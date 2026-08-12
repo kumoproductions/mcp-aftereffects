@@ -184,7 +184,8 @@ registerOp({
             if (!_list || _list.length === 0) return { ok: false, error: "no font matching " + ${jsxVal(args.postScriptName)} };
             var _font = _list[0];
             if (typeof _font.hasGlyphsFor !== "function") return { ok: false, error: "hasGlyphsFor needs AE 25.1+" };
-            var _has = _font.hasGlyphsFor(${jsxVal(args.text)});
+            var _has = null;
+            try { _has = _font.hasGlyphsFor(${jsxVal(args.text)}); } catch (eHg) { return { ok: false, error: "hasGlyphsFor failed: " + AE.errText(eHg) }; }
             return { ok: true, font: ${jsxVal(args.postScriptName)}, hasGlyphs: _has };
         `;
   },

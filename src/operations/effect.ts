@@ -255,8 +255,13 @@ registerOp({
             try { _menu.setPropertyParameters(_items); } catch (eSp) { return { ok: false, error: "setPropertyParameters failed: " + AE.errText(eSp) }; }
             var _eff2 = null;
             try { _eff2 = _fx.property(_effIndex); } catch (eRf) {}
-            if (_eff2 !== null && _eff2.name !== _prevName) {
-                try { _eff2.name = _prevName; } catch (eNm) {}
+            // The re-resolved reference can itself be invalid (every member
+            // access throws "Object is invalid") — treat that the same as a
+            // failed re-resolve so the read-back below skips it too.
+            var _eff2Name = null;
+            try { _eff2Name = _eff2 !== null ? _eff2.name : null; } catch (eNm) { _eff2 = null; }
+            if (_eff2 !== null && _eff2Name !== _prevName) {
+                try { _eff2.name = _prevName; } catch (eNm2) {}
             }
             var _read = null;
             if (_eff2 !== null) {
