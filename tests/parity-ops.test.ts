@@ -299,6 +299,48 @@ describe("variable font ops", () => {
   });
 });
 
+describe("render queue raw settings and per-item control", () => {
+  it("render.get_settings reads both levels with a format switch", () => {
+    const op = getOp("render.get_settings");
+    expect(op!.readOnly).toBe(true);
+    const jsx = op!.toJsx({ format: "all" });
+    expect(jsx).toContain("GetSettingsFormat.STRING");
+    expect(jsx).toContain("outputModule(_o)");
+  });
+
+  it("render.set_settings / set_om_settings pass the map through setSettings", () => {
+    const rqi = getOp("render.set_settings")!.toJsx({ settings: { Quality: "Best" } });
+    expect(rqi).toContain('setSettings({"Quality":"Best"})');
+    const om = getOp("render.set_om_settings")!.toJsx({
+      settings: { Format: "QuickTime" },
+      outputModuleIndex: 2,
+    });
+    expect(om).toContain('setSettings({"Format":"QuickTime"})');
+    expect(om).toContain("outputModule(2)");
+  });
+
+  it("render.remove_item requires an explicit index", () => {
+    const op = getOp("render.remove_item");
+    expect(op!.params.find((p) => p.name === "queueIndex")?.required).toBe(true);
+    expect(op!.toJsx({ queueIndex: 2 })).toContain("_rqi.remove()");
+  });
+
+  it("render.set_output maps the new enums and flags", () => {
+    const jsx = getOp("render.set_output")!.toJsx({
+      render: false,
+      skipFrames: 1,
+      logType: "errorsAndPerFrameInfo",
+      postRenderAction: "importAndReplaceUsage",
+      includeSourceXMP: true,
+    });
+    expect(jsx).toContain("_rqi.render = false");
+    expect(jsx).toContain("_rqi.skipFrames = 1");
+    expect(jsx).toContain("LogType.ERRORS_AND_PER_FRAME_INFO");
+    expect(jsx).toContain("PostRenderAction.IMPORT_AND_REPLACE_USAGE");
+    expect(jsx).toContain("_om.includeSourceXMP = true");
+  });
+});
+
 describe("layer.set_props enum coercion", () => {
   it("routes every assignment through AE.coerceLayerPropValue", () => {
     const op = getOp("layer.set_props");
