@@ -218,3 +218,188 @@ registerOp({
         `;
   },
 });
+
+registerOp({
+  name: "font.list_duplicates",
+  category: "font",
+  readOnly: true,
+  description:
+    "List groups of installed fonts that share a PostScript name (FontsObject.fontsDuplicateByPostScriptName, AE 24.6+) — the usual cause of 'wrong font picked' surprises.",
+  params: [],
+  toJsx() {
+    return `
+            if (!app.fonts) return { ok: false, error: "app.fonts needs AE 24.0+" };
+            var _groups = null;
+            try { _groups = app.fonts.fontsDuplicateByPostScriptName; } catch (eDp) { return { ok: false, error: "fontsDuplicateByPostScriptName needs AE 24.6+: " + AE.errText(eDp) }; }
+            if (!_groups) return { ok: false, error: "fontsDuplicateByPostScriptName needs AE 24.6+" };
+            var _out = [];
+            for (var _i = 0; _i < _groups.length; _i++) {
+                var _grp = _groups[_i];
+                var _fonts = [];
+                var _list = (_grp && typeof _grp.length === "number") ? _grp : [_grp];
+                for (var _j = 0; _j < _list.length; _j++) {
+                    var _font = _list[_j];
+                    _fonts.push({
+                        postScriptName: AE.safeGet(function () { return _font.postScriptName; }, null),
+                        familyName: AE.safeGet(function () { return _font.familyName; }, null),
+                        styleName: AE.safeGet(function () { return _font.styleName; }, null),
+                        location: AE.safeGet(function () { return _font.location; }, null)
+                    });
+                }
+                _out.push(_fonts);
+            }
+            return { ok: true, count: _out.length, groups: _out };
+        `;
+  },
+});
+
+registerOp({
+  name: "font.get_lists",
+  category: "font",
+  readOnly: true,
+  description:
+    "Read the Character panel's Favorites and most-recently-used font family lists (AE 24.6+).",
+  params: [],
+  toJsx() {
+    return `
+            if (!app.fonts) return { ok: false, error: "app.fonts needs AE 24.0+" };
+            var _fav = null;
+            var _mru = null;
+            try { _fav = AE.valueToJson(app.fonts.favoriteFontFamilyList); } catch (eF) {}
+            try { _mru = AE.valueToJson(app.fonts.mruFontFamilyList); } catch (eM) {}
+            if (_fav === null && _mru === null) return { ok: false, error: "font lists need AE 24.6+" };
+            return { ok: true, favorites: _fav, recent: _mru };
+        `;
+  },
+});
+
+registerOp({
+  name: "font.set_favorites",
+  category: "font",
+  description:
+    "Replace the Character panel's Favorites font family list (FontsObject.favoriteFontFamilyList, AE 24.6+).",
+  params: [
+    {
+      name: "families",
+      type: "array",
+      description: "Font family names, in display order",
+      required: true,
+    },
+  ],
+  toJsx(args) {
+    return `
+            if (!app.fonts) return { ok: false, error: "app.fonts needs AE 24.0+" };
+            try { app.fonts.favoriteFontFamilyList = ${jsxVal(args.families)}; } catch (eF) { return { ok: false, error: "favoriteFontFamilyList write needs AE 24.6+: " + AE.errText(eF) }; }
+            return { ok: true, favorites: AE.valueToJson(app.fonts.favoriteFontFamilyList) };
+        `;
+  },
+});
+
+registerOp({
+  name: "font.set_substitution",
+  category: "font",
+  description:
+    "Configure automatic replacement of substituted (missing) fonts (AE 24.6+): matchPolicy postScriptName|ctfiEqual|disabled, and freezeSync to stop Adobe Fonts auto-sync on project open.",
+  params: [
+    {
+      name: "matchPolicy",
+      type: "string",
+      description: "postScriptName|ctfiEqual|disabled",
+      required: false,
+    },
+    {
+      name: "freezeSync",
+      type: "boolean",
+      description: "Suppress Adobe Fonts auto-sync of substituted fonts",
+      required: false,
+    },
+  ],
+  toJsx(args) {
+    const sets: string[] = [];
+    if (args.matchPolicy !== undefined)
+      sets.push(`
+        try {
+            var _mpMap = { "postScriptName": SubstitutedFontReplacementMatchPolicy.POSTSCRIPT_NAME, "ctfiEqual": SubstitutedFontReplacementMatchPolicy.CTFI_EQUAL, "disabled": SubstitutedFontReplacementMatchPolicy.DISABLED };
+            if (_mpMap.hasOwnProperty(${jsxVal(args.matchPolicy)})) { app.fonts.substitutedFontReplacementMatchPolicy = _mpMap[${jsxVal(args.matchPolicy)}]; }
+            else { _w.push("matchPolicy: pass postScriptName|ctfiEqual|disabled"); }
+        } catch (e) { _w.push("matchPolicy (AE 24.6+): " + AE.errText(e)); }`);
+    if (args.freezeSync !== undefined)
+      sets.push(
+        `try { app.fonts.freezeSyncSubstitutedFonts = ${jsxVal(args.freezeSync)}; } catch (e) { _w.push("freezeSync (AE 24.6+): " + AE.errText(e)); }`,
+      );
+    return `
+            if (!app.fonts) return { ok: false, error: "app.fonts needs AE 24.0+" };
+            var _w = [];
+            ${sets.join("\n")}
+            return { ok: true, warnings: _w };
+        `;
+  },
+});
+
+/** Friendly script name -> CTScript member, probe-built. Defines _scripts. */
+const CT_SCRIPT_MAP_JSX = `
+    var _scripts = {};
+    function _addScript(name, member) {
+        try { if (CTScript[member] !== undefined) _scripts[name] = CTScript[member]; } catch (eCs) {}
+    }
+    _addScript("roman", "CT_ROMAN_SCRIPT"); _addScript("japanese", "CT_JAPANESE_SCRIPT");
+    _addScript("arabic", "CT_ARABIC_SCRIPT"); _addScript("cyrillic", "CT_CYRILLIC_SCRIPT");
+    _addScript("greek", "CT_GREEK_SCRIPT"); _addScript("hebrew", "CT_HEBREW_SCRIPT");
+    _addScript("thai", "CT_THAI_SCRIPT"); _addScript("devanagari", "CT_DEVANAGARI_SCRIPT");
+`;
+
+registerOp({
+  name: "font.get_default_for_script",
+  category: "font",
+  readOnly: true,
+  description:
+    "Read the default font for a writing script (FontsObject.getDefaultFontForCTScript, AE 25.1+): roman|japanese|arabic|cyrillic|greek|hebrew|thai|devanagari, or a raw CTScript member name like CT_HANGUL_SCRIPT.",
+  params: [
+    {
+      name: "script",
+      type: "string",
+      description: "Writing script (see description)",
+      required: true,
+    },
+  ],
+  toJsx(args) {
+    return `
+            if (!app.fonts || typeof app.fonts.getDefaultFontForCTScript !== "function") return { ok: false, error: "getDefaultFontForCTScript needs AE 25.1+" };
+            ${CT_SCRIPT_MAP_JSX}
+            var _arg = ${jsxVal(args.script)};
+            var _script = _scripts.hasOwnProperty(_arg) ? _scripts[_arg] : null;
+            if (_script === null) { try { if (CTScript[_arg] !== undefined) _script = CTScript[_arg]; } catch (eRw) {} }
+            if (_script === null) return { ok: false, error: "unknown script '" + _arg + "'" };
+            var _font = null;
+            try { _font = app.fonts.getDefaultFontForCTScript(_script); } catch (eG) { return { ok: false, error: "getDefaultFontForCTScript failed: " + AE.errText(eG) }; }
+            if (!_font) return { ok: true, script: _arg, font: null };
+            return { ok: true, script: _arg, font: { postScriptName: AE.safeGet(function () { return _font.postScriptName; }, null), familyName: AE.safeGet(function () { return _font.familyName; }, null), styleName: AE.safeGet(function () { return _font.styleName; }, null) } };
+        `;
+  },
+});
+
+registerOp({
+  name: "font.set_default_for_script",
+  category: "font",
+  description:
+    "Set the default font AE uses for a writing script (FontsObject.setDefaultFontForCTScript, AE 25.1+). Script names as in font.get_default_for_script; font by PostScript name.",
+  params: [
+    { name: "script", type: "string", description: "Writing script", required: true },
+    { name: "postScriptName", type: "string", description: "Font PostScript name", required: true },
+  ],
+  toJsx(args) {
+    return `
+            if (!app.fonts || typeof app.fonts.setDefaultFontForCTScript !== "function") return { ok: false, error: "setDefaultFontForCTScript needs AE 25.1+" };
+            ${CT_SCRIPT_MAP_JSX}
+            var _arg = ${jsxVal(args.script)};
+            var _script = _scripts.hasOwnProperty(_arg) ? _scripts[_arg] : null;
+            if (_script === null) { try { if (CTScript[_arg] !== undefined) _script = CTScript[_arg]; } catch (eRw) {} }
+            if (_script === null) return { ok: false, error: "unknown script '" + _arg + "'" };
+            var _list = null;
+            try { _list = app.fonts.getFontsByPostScriptName(${jsxVal(args.postScriptName)}); } catch (eLk) {}
+            if (!_list || _list.length === 0) return { ok: false, error: "no font matching " + ${jsxVal(args.postScriptName)} };
+            try { app.fonts.setDefaultFontForCTScript(_script, _list[0]); } catch (eS) { return { ok: false, error: "setDefaultFontForCTScript failed: " + AE.errText(eS) }; }
+            return { ok: true, script: _arg, font: ${jsxVal(args.postScriptName)} };
+        `;
+  },
+});
