@@ -681,3 +681,54 @@ registerOp({
         `;
   },
 });
+
+registerOp({
+  name: "project.parse_swatch",
+  category: "project",
+  readOnly: true,
+  description:
+    "Parse an Adobe swatch file (.ase) and return its colors (app.parseSwatchFile) - feed brand palettes to fills, solids, and text colors.",
+  params: [
+    { name: "path", type: "string", description: "Absolute path to the .ase file", required: true },
+  ],
+  toJsx(args) {
+    return `
+            var _f = new File(${jsxVal(args.path)});
+            if (!_f.exists) return { ok: false, error: "file not found: " + ${jsxVal(args.path)} };
+            var _sw = null;
+            try { _sw = app.parseSwatchFile(_f); } catch (eSw) { return { ok: false, error: "parseSwatchFile failed: " + AE.errText(eSw) }; }
+            return { ok: true, swatch: AE.valueToJson(_sw) };
+        `;
+  },
+});
+
+registerOp({
+  name: "project.get_xmp",
+  category: "project",
+  readOnly: true,
+  description: "Read the project's XMP metadata packet (Project.xmpPacket) as an RDF/XML string.",
+  params: [],
+  toJsx() {
+    return `
+            var _xmp = null;
+            try { _xmp = app.project.xmpPacket; } catch (eX) { return { ok: false, error: "xmpPacket read failed: " + AE.errText(eX) }; }
+            return { ok: true, length: _xmp ? _xmp.length : 0, xmp: _xmp };
+        `;
+  },
+});
+
+registerOp({
+  name: "project.set_xmp",
+  category: "project",
+  description:
+    "Replace the project's XMP metadata packet (Project.xmpPacket). Pass a complete, well-formed RDF/XML packet - AE does not validate fragments.",
+  params: [
+    { name: "xmp", type: "string", description: "Complete XMP packet (RDF/XML)", required: true },
+  ],
+  toJsx(args) {
+    return `
+            try { app.project.xmpPacket = ${jsxVal(args.xmp)}; } catch (eX) { return { ok: false, error: "xmpPacket write failed: " + AE.errText(eX) }; }
+            return { ok: true, length: app.project.xmpPacket.length };
+        `;
+  },
+});
