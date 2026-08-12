@@ -259,6 +259,8 @@ Static tools should stay rare — most new capability belongs in the operation r
 
 No docs regen needed: operations are advertised at runtime by `ae_catalog` and never appear in `docs/TOOLS.md`. They automatically get `ae_do`'s arg validation, `dryRun`, undo grouping, and batch support.
 
+**Application-configuration operations require explicit user consent.** An operation that changes the user's AE application state rather than the project — preferences, memory limits, font substitution policy, saved render templates, the active tool — declares `appConfig: true`. Registration injects a required `confirm: true` parameter, and `ae_do`/`batch.run` refuse the call unless it is passed; the contract (surfaced in `ae_catalog` and the refusal message) is that the caller passes `confirm` only when the user explicitly requested the change, never as a side effect of other work.
+
 **Undo grouping is automatic — do not open a group yourself,** either in `toJsx` output or in `eval.run` code; an unbalanced group leaks past the call and corrupts undo for the whole session. The one exception is an operation that _drives_ the undo stack (undo, redo): After Effects resolves those against the group that is still open, so wrapped in one they revert nothing the caller asked for. Such an operation declares `undoGroup: () => false` (see `project.undo`), which travels to the dispatcher as `undoGroup: false` and makes the call run bare. `batch.run` rejects those children — a batch is itself one undo group.
 
 ## Testing tiers

@@ -215,7 +215,8 @@ registerOp({
 registerOp({
   name: "layer.set_track_matte",
   category: "layer",
-  description: "Set track matte for a layer. The matte layer must be directly above the target.",
+  description:
+    "Set (or remove) a track matte on a layer. Uses AVLayer.setTrackMatte (AE 23.0+): the matte can be ANY layer in the comp — it does not need to sit directly above the target.",
   params: [
     { name: "comp", type: "any", description: "Comp name or id", required: true },
     {
@@ -226,9 +227,9 @@ registerOp({
     },
     {
       name: "matteLayer",
-      type: "number",
-      description: "1-based index of the matte source layer (must be above target)",
-      required: true,
+      type: "any",
+      description: "Matte source layer: 1-based index or name. Ignored when matteType is 'none'.",
+      required: false,
     },
     {
       name: "matteType",
@@ -251,10 +252,15 @@ registerOp({
             if (!_type && ${jsxVal(args.matteType)} !== "none") return { ok: false, error: "unknown matteType" };
             if (${jsxVal(args.matteType)} === "none") {
                 _layer.removeTrackMatte();
-            } else {
-                _layer.setTrackMatte(_comp.layer(${jsxVal(args.matteLayer)}), _type);
+                return { ok: true, layer: _layer.name, matte: null };
             }
-            return { ok: true, layer: _layer.name };
+            var _matteArg = ${jsxVal(args.matteLayer ?? null)};
+            if (_matteArg === null) return { ok: false, error: "matteLayer is required when matteType is not 'none'" };
+            var _matte = AE.findLayerInComp(_comp, _matteArg);
+            if (!_matte) return { ok: false, error: "no matte layer matching " + String(_matteArg) };
+            if (_matte === _layer) return { ok: false, error: "a layer cannot be its own track matte" };
+            _layer.setTrackMatte(_matte, _type);
+            return { ok: true, layer: _layer.name, matte: _matte.name };
         `;
   },
 });
@@ -362,6 +368,52 @@ registerOp({
             }
             var _newLayer = _target.layer(1);
             return { ok: true, copied: _layer.name, targetComp: _target.name, newIndex: _newLayer.index, newName: _newLayer.name };
+        `;
+  },
+});
+
+registerOp({
+  name: "layer.calculate_transform",
+  category: "layer",
+  readOnly: true,
+  description:
+    "Calculate the transform that maps a 3D layer onto three corner points (AVLayer.calculateTransformFromPoints) - corner-pin style placement in 3D space. Calculation-only: returns anchorPoint/position/x-y-zRotation/scale without touching the layer — apply them with property.set / layer.set_props.",
+  params: [
+    { name: "comp", type: "any", description: "Comp name or id", required: true },
+    {
+      name: "layer",
+      type: "any",
+      description: "1-based layer index, or the layer name (3D layer)",
+      required: true,
+    },
+    {
+      name: "topLeft",
+      type: "array",
+      description: "[x,y,z] world point for the layer's top-left",
+      required: true,
+    },
+    {
+      name: "topRight",
+      type: "array",
+      description: "[x,y,z] world point for the top-right",
+      required: true,
+    },
+    {
+      name: "bottomLeft",
+      type: "array",
+      description:
+        "[x,y,z] world point for the bottom-left. The scripting guide names this pointBottomRight, but the implementation expects the bottom-left (the guide's own example passes bl): a true bottom-right returns the same placement with zScale skewed by sin(corner angle) — verified on AE 26.3.",
+      required: true,
+    },
+  ],
+  toJsx(args) {
+    return `
+            ${jsxCompLayerPreamble(args)}
+            if (typeof _layer.calculateTransformFromPoints !== "function") return { ok: false, error: "calculateTransformFromPoints is not available on this layer" };
+            if (!_layer.threeDLayer) return { ok: false, error: "layer must be 3D (threeDLayer: true) for calculateTransformFromPoints" };
+            var _xf = null;
+            try { _xf = _layer.calculateTransformFromPoints(${jsxVal(args.topLeft)}, ${jsxVal(args.topRight)}, ${jsxVal(args.bottomLeft)}); } catch (eCt) { return { ok: false, error: "calculateTransformFromPoints failed: " + AE.errText(eCt) }; }
+            return { ok: true, transform: AE.valueToJson(_xf) };
         `;
   },
 });

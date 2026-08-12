@@ -84,6 +84,10 @@ export const catalogTool = defineTool({
       name: op.name,
       description: op.description,
       readOnly: op.readOnly === true,
+      // Changes the user's AE application configuration: runs only with
+      // confirm: true, which the caller may pass only on the user's explicit
+      // request. The injected `confirm` param carries the same contract.
+      ...(op.appConfig ? { appConfig: true } : {}),
       params: op.params.map((p) => ({
         name: p.name,
         type: p.type,

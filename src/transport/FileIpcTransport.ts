@@ -160,6 +160,7 @@ export class FileIpcTransport implements AeTransport {
       // missing field to true, and "group this" must not depend on a key
       // surviving the trip.
       undoGroup: req.undoGroup !== false,
+      suppressDialogs: req.suppressDialogs !== false,
     };
 
     // 1. Write the request atomically (tmp + rename). The tmp name is dotted so

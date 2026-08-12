@@ -16,6 +16,13 @@ registerOp({
       required: false,
     },
   ],
+  // Runs OUTSIDE the dispatcher's undo group, same class as undo/redo:
+  // replacing the project while a group is open orphans that group — the
+  // endUndoGroup after app.open() closes nothing that exists anymore. AE 26
+  // flags it with an async "UndoGroup Mismatch" dialog and undo stays broken
+  // for the rest of the session. An undo group is meaningless across a
+  // project boundary anyway: closing destroys the undo stack it would guard.
+  undoGroup: () => false,
   toJsx(args) {
     return `
             if (${jsxVal(!!args.save)} && app.project.file) app.project.save();
@@ -55,8 +62,29 @@ registerOp({
         "footage|comp|compRetainLayerSizes|project — for layered files like .psd/.ai (default footage)",
       required: false,
     },
+    {
+      name: "rangeStart",
+      type: "number",
+      description: "Sequence only: first frame number to import (ImportOptions.rangeStart)",
+      required: false,
+    },
+    {
+      name: "rangeEnd",
+      type: "number",
+      description: "Sequence only: last frame number to import (ImportOptions.rangeEnd)",
+      required: false,
+    },
   ],
   toJsx(args) {
+    const rangeSets: string[] = [];
+    if (args.rangeStart !== undefined)
+      rangeSets.push(
+        `try { imp.rangeStart = ${jsxVal(args.rangeStart)}; } catch (eRs) { return { ok: false, error: "rangeStart not supported on this AE: " + AE.errText(eRs) }; }`,
+      );
+    if (args.rangeEnd !== undefined)
+      rangeSets.push(
+        `try { imp.rangeEnd = ${jsxVal(args.rangeEnd)}; } catch (eRe) { return { ok: false, error: "rangeEnd not supported on this AE: " + AE.errText(eRe) }; }`,
+      );
     return `
             var f = new File(${jsxVal(args.path)});
             if (!f.exists) return { ok: false, error: "file not found" };
@@ -64,6 +92,7 @@ registerOp({
             if (${jsxVal(!!args.sequence)}) {
                 imp.sequence = true;
                 imp.forceAlphabetical = ${jsxVal(!!args.forceAlphabetical)};
+                ${rangeSets.join("\n")}
             }
             var _importAs = ${jsxVal(args.importAs ?? null)};
             if (_importAs !== null) {
@@ -99,7 +128,9 @@ registerOp({
   // resolves each Undo against the group that is still open: the previous
   // call — the one the caller wants back — is never reverted, and the group
   // this call closes afterwards leaves the stack out of step with the project.
+  // Dialog suppression opens the same kind of scope, so it opts out of both.
   undoGroup: () => false,
+  suppressDialogs: () => false,
   toJsx(args) {
     // Menu command ID (see command.list / hyperbrew command-ID table): 16 = Undo.
     return `
@@ -249,7 +280,8 @@ registerOp({
     {
       name: "type",
       type: "string",
-      description: "AVLayer|TextLayer|ShapeLayer|CameraLayer|LightLayer",
+      description:
+        "AVLayer|TextLayer|ShapeLayer|CameraLayer|LightLayer|ThreeDModelLayer|ParametricMeshLayer",
       required: false,
     },
     {
@@ -277,6 +309,11 @@ registerOp({
                 }
             }
             function typeName(layer) {
+                // 3D model / parametric mesh classes only exist on AE 24.4+ /
+                // 26.3+ — probe before instanceof, and before the AVLayer
+                // fallback (both are AVLayer subclasses).
+                try { if (typeof ThreeDModelLayer !== "undefined" && layer instanceof ThreeDModelLayer) return "ThreeDModelLayer"; } catch (e3d) {}
+                try { if (typeof ParametricMeshLayer !== "undefined" && layer instanceof ParametricMeshLayer) return "ParametricMeshLayer"; } catch (ePm) {}
                 if (layer instanceof TextLayer) return "TextLayer";
                 if (layer instanceof ShapeLayer) return "ShapeLayer";
                 if (layer instanceof CameraLayer) return "CameraLayer";
@@ -455,9 +492,65 @@ registerOp({
       description: "software|opencl|cuda|metal",
       required: false,
     },
+    {
+      name: "linearizeWorkingSpace",
+      type: "boolean",
+      description: "Linearize the working color space (AE 16.0+)",
+      required: false,
+    },
+    {
+      name: "compensateForSceneReferredProfiles",
+      type: "boolean",
+      description: "Compensate for scene-referred profiles (AE 16.0+)",
+      required: false,
+    },
+    {
+      name: "displayStartFrame",
+      type: "number",
+      description: "Frame count starts at 0 or 1 (when counting frames)",
+      required: false,
+    },
+    {
+      name: "feetFramesFilmType",
+      type: "string",
+      description: "mm16|mm35 (film type for feet+frames display)",
+      required: false,
+    },
+    {
+      name: "footageTimecodeDisplayStartType",
+      type: "string",
+      description: "start0|useSourceMedia (footage timecode start)",
+      required: false,
+    },
   ],
   toJsx(args) {
     const sets: string[] = [];
+    if (args.linearizeWorkingSpace !== undefined)
+      sets.push(
+        `try { app.project.linearizeWorkingSpace = ${jsxVal(args.linearizeWorkingSpace)}; } catch (e) { _w.push("linearizeWorkingSpace (AE 16.0+): " + AE.errText(e)); }`,
+      );
+    if (args.compensateForSceneReferredProfiles !== undefined)
+      sets.push(
+        `try { app.project.compensateForSceneReferredProfiles = ${jsxVal(args.compensateForSceneReferredProfiles)}; } catch (e) { _w.push("compensateForSceneReferredProfiles (AE 16.0+): " + AE.errText(e)); }`,
+      );
+    if (args.displayStartFrame !== undefined)
+      sets.push(
+        `try { app.project.displayStartFrame = ${jsxVal(args.displayStartFrame)}; } catch (e) { _w.push("displayStartFrame: " + AE.errText(e)); }`,
+      );
+    if (args.feetFramesFilmType !== undefined)
+      sets.push(`
+        try {
+            var _ffMap = { "mm16": FeetFramesFilmType.MM16, "mm35": FeetFramesFilmType.MM35 };
+            if (_ffMap.hasOwnProperty(${jsxVal(args.feetFramesFilmType)})) { app.project.feetFramesFilmType = _ffMap[${jsxVal(args.feetFramesFilmType)}]; }
+            else { _w.push("feetFramesFilmType: pass mm16 or mm35"); }
+        } catch (e) { _w.push("feetFramesFilmType: " + AE.errText(e)); }`);
+    if (args.footageTimecodeDisplayStartType !== undefined)
+      sets.push(`
+        try {
+            var _ftMap = { "start0": FootageTimecodeDisplayStartType.FTCS_START_0, "useSourceMedia": FootageTimecodeDisplayStartType.FTCS_USE_SOURCE_MEDIA };
+            if (_ftMap.hasOwnProperty(${jsxVal(args.footageTimecodeDisplayStartType)})) { app.project.footageTimecodeDisplayStartType = _ftMap[${jsxVal(args.footageTimecodeDisplayStartType)}]; }
+            else { _w.push("footageTimecodeDisplayStartType: pass start0 or useSourceMedia"); }
+        } catch (e) { _w.push("footageTimecodeDisplayStartType: " + AE.errText(e)); }`);
     if (args.bitsPerChannel !== undefined)
       sets.push(
         `try { app.project.bitsPerChannel = ${jsxVal(args.bitsPerChannel)}; } catch (e) { _w.push("bitsPerChannel: " + AE.errText(e)); }`,
@@ -543,7 +636,12 @@ registerOp({
                 framesUseFeetFrames: AE.safeGet(function () { return _p.framesUseFeetFrames; }, null),
                 transparencyGridThumbnails: AE.safeGet(function () { return _p.transparencyGridThumbnails; }, null),
                 gpuAccelType: AE.safeGet(function () { return String(_p.gpuAccelType); }, null),
-                timeDisplayType: AE.safeGet(function () { return _p.timeDisplayType === TimeDisplayType.FRAMES ? "frames" : "timecode"; }, null)
+                timeDisplayType: AE.safeGet(function () { return _p.timeDisplayType === TimeDisplayType.FRAMES ? "frames" : "timecode"; }, null),
+                linearizeWorkingSpace: AE.safeGet(function () { return _p.linearizeWorkingSpace; }, null),
+                compensateForSceneReferredProfiles: AE.safeGet(function () { return _p.compensateForSceneReferredProfiles; }, null),
+                displayStartFrame: AE.safeGet(function () { return _p.displayStartFrame; }, null),
+                feetFramesFilmType: AE.safeGet(function () { var _ff = _p.feetFramesFilmType; if (_ff === FeetFramesFilmType.MM16) return "mm16"; if (_ff === FeetFramesFilmType.MM35) return "mm35"; return String(_ff); }, null),
+                footageTimecodeDisplayStartType: AE.safeGet(function () { var _ft = _p.footageTimecodeDisplayStartType; if (_ft === FootageTimecodeDisplayStartType.FTCS_START_0) return "start0"; if (_ft === FootageTimecodeDisplayStartType.FTCS_USE_SOURCE_MEDIA) return "useSourceMedia"; return String(_ft); }, null)
             };
             if (${jsxVal(!!args.includeColorProfiles)}) {
                 try { _out.colorProfiles = _p.listColorProfiles(); } catch (eCp) { _out.colorProfiles = null; }
@@ -600,6 +698,252 @@ registerOp({
     return `
             var _consolidated = app.project.consolidateFootage();
             return { ok: true, consolidated: _consolidated, numItems: app.project.numItems };
+        `;
+  },
+});
+
+registerOp({
+  name: "project.import_placeholder",
+  category: "project",
+  description:
+    "Create a placeholder footage item (Project.importPlaceholder) to build comps before the real footage exists. Relink later with footage.replace.",
+  params: [
+    { name: "name", type: "string", description: "Placeholder name", required: true },
+    { name: "width", type: "number", description: "Width in px", required: true },
+    { name: "height", type: "number", description: "Height in px", required: true },
+    { name: "frameRate", type: "number", description: "Frame rate", required: true },
+    { name: "duration", type: "number", description: "Duration in seconds", required: true },
+  ],
+  toJsx(args) {
+    return `
+            var _item = null;
+            try {
+                _item = app.project.importPlaceholder(${jsxVal(args.name)}, ${jsxVal(args.width)}, ${jsxVal(args.height)}, ${jsxVal(args.frameRate)}, ${jsxVal(args.duration)});
+            } catch (eIp) { return { ok: false, error: "importPlaceholder failed: " + AE.errText(eIp) }; }
+            return { ok: true, id: _item.id, name: _item.name, width: _item.width, height: _item.height, duration: _item.duration };
+        `;
+  },
+});
+
+registerOp({
+  name: "project.new",
+  category: "project",
+  description:
+    "Create a NEW empty project (app.newProject). Closes the current project — pass save=true to save it first (only works when it has a file path). Destructive to unsaved work.",
+  params: [
+    {
+      name: "save",
+      type: "boolean",
+      description: "Save the current project before closing (default false; needs a file path)",
+      required: false,
+      default: false,
+    },
+  ],
+  // Outside the undo group for the same reason as project.open above.
+  undoGroup: () => false,
+  toJsx(args) {
+    // close(DO_NOT_SAVE_CHANGES) BEFORE newProject: calling newProject on a
+    // dirty project pops the "Save changes?" modal, which blocks all scripting
+    // (beginSuppressDialogs does not cover confirmation dialogs) — the E2E run
+    // that discovered this had to be recovered with taskkill.
+    return `
+            if (${jsxVal(!!args.save)}) {
+                if (app.project.file) { app.project.save(); }
+                else if (app.project.numItems > 0) { return { ok: false, error: "current project has no file path — save it first (ae_save_project with a path) or pass save=false to discard" }; }
+            }
+            app.project.close(CloseOptions.DO_NOT_SAVE_CHANGES);
+            var _p = app.newProject();
+            if (!_p) return { ok: false, error: "app.newProject returned null" };
+            return { ok: true, numItems: _p.numItems };
+        `;
+  },
+});
+
+registerOp({
+  name: "project.parse_swatch",
+  category: "project",
+  readOnly: true,
+  description:
+    "Parse an Adobe swatch file (.ase) and return its colors (app.parseSwatchFile) - feed brand palettes to fills, solids, and text colors.",
+  params: [
+    { name: "path", type: "string", description: "Absolute path to the .ase file", required: true },
+  ],
+  toJsx(args) {
+    return `
+            var _f = new File(${jsxVal(args.path)});
+            if (!_f.exists) return { ok: false, error: "file not found: " + ${jsxVal(args.path)} };
+            var _sw = null;
+            try { _sw = app.parseSwatchFile(_f); } catch (eSw) { return { ok: false, error: "parseSwatchFile failed: " + AE.errText(eSw) }; }
+            return { ok: true, swatch: AE.valueToJson(_sw) };
+        `;
+  },
+});
+
+registerOp({
+  name: "project.get_xmp",
+  category: "project",
+  readOnly: true,
+  description: "Read the project's XMP metadata packet (Project.xmpPacket) as an RDF/XML string.",
+  params: [],
+  toJsx() {
+    return `
+            var _xmp = null;
+            try { _xmp = app.project.xmpPacket; } catch (eX) { return { ok: false, error: "xmpPacket read failed: " + AE.errText(eX) }; }
+            return { ok: true, length: _xmp ? _xmp.length : 0, xmp: _xmp };
+        `;
+  },
+});
+
+registerOp({
+  name: "project.set_xmp",
+  category: "project",
+  description:
+    "Replace the project's XMP metadata packet (Project.xmpPacket). Pass a complete, well-formed RDF/XML packet - AE does not validate fragments.",
+  params: [
+    { name: "xmp", type: "string", description: "Complete XMP packet (RDF/XML)", required: true },
+  ],
+  toJsx(args) {
+    return `
+            try { app.project.xmpPacket = ${jsxVal(args.xmp)}; } catch (eX) { return { ok: false, error: "xmpPacket write failed: " + AE.errText(eX) }; }
+            return { ok: true, length: app.project.xmpPacket.length };
+        `;
+  },
+});
+
+registerOp({
+  name: "project.set_default_import_folder",
+  category: "project",
+  appConfig: true,
+  description:
+    "Set the folder shown by default in the file import dialog (Project.setDefaultImportFolder).",
+  params: [{ name: "path", type: "string", description: "Absolute folder path", required: true }],
+  toJsx(args) {
+    return `
+            var _f = new Folder(${jsxVal(args.path)});
+            if (!_f.exists) return { ok: false, error: "folder not found: " + ${jsxVal(args.path)} };
+            var _res = false;
+            try { _res = app.project.setDefaultImportFolder(_f); } catch (eDf) { return { ok: false, error: "setDefaultImportFolder failed: " + AE.errText(eDf) }; }
+            return { ok: true, set: _res, path: _f.fsName.replace(/\\\\/g, "/") };
+        `;
+  },
+});
+
+/** Friendly-name → ToolType member table, built probe-guarded at runtime. */
+const TOOL_MAP_JSX = `
+    var _tools = {};
+    var _missingTools = {};
+    function _addTool(name, member) {
+        try { if (ToolType[member] !== undefined) { _tools[name] = ToolType[member]; return; } } catch (eT) {}
+        _missingTools[name] = member;
+    }
+    _addTool("selection", "Tool_Arrow"); _addTool("rotate", "Tool_Rotate");
+    _addTool("hand", "Tool_Hand"); _addTool("zoom", "Tool_Magnify");
+    _addTool("panBehind", "Tool_PanBehind");
+    _addTool("rect", "Tool_Rect"); _addTool("roundedRect", "Tool_RoundedRect");
+    _addTool("ellipse", "Tool_Oval"); _addTool("polygon", "Tool_Polygon"); _addTool("star", "Tool_Star");
+    _addTool("textHorizontal", "Tool_TextH"); _addTool("textVertical", "Tool_TextV");
+    _addTool("pen", "Tool_Pen"); _addTool("maskFeather", "Tool_Feather");
+    _addTool("brush", "Tool_Paintbrush"); _addTool("cloneStamp", "Tool_CloneStamp"); _addTool("eraser", "Tool_Eraser");
+    _addTool("puppetPin", "Tool_Pin"); _addTool("puppetStarch", "Tool_PinStarch");
+    _addTool("puppetBend", "Tool_PinBend"); _addTool("puppetAdvanced", "Tool_PinAdvanced"); _addTool("puppetOverlap", "Tool_PinDepth");
+    _addTool("cameraUnified", "Tool_CameraMaya"); _addTool("cameraOrbit", "Tool_CameraOrbit");
+    _addTool("cameraTrackXY", "Tool_CameraTrackXY"); _addTool("cameraTrackZ", "Tool_CameraTrackZ");
+    _addTool("cameraOrbitCursor", "Tool_CameraOrbitCursor"); _addTool("cameraOrbitScene", "Tool_CameraOrbitScene");
+    _addTool("cameraOrbitCamera", "Tool_CameraOrbitCamera"); _addTool("cameraPanCursor", "Tool_CameraPanCursor");
+    function _toolName(v) {
+        for (var _tk in _tools) { if (_tools.hasOwnProperty(_tk) && _tools[_tk] === v) return _tk; }
+        try { return String(v); } catch (eTn) { return null; }
+    }
+`;
+
+registerOp({
+  name: "project.get_tool",
+  category: "project",
+  readOnly: true,
+  description: "Read the active tool in the Tools panel (Project.toolType, AE 14.0+).",
+  params: [],
+  toJsx() {
+    return `
+            ${TOOL_MAP_JSX}
+            var _cur = null;
+            try { _cur = app.project.toolType; } catch (eTt) { return { ok: false, error: "toolType needs AE 14.0+: " + AE.errText(eTt) }; }
+            return { ok: true, tool: _toolName(_cur) };
+        `;
+  },
+});
+
+registerOp({
+  name: "project.set_tool",
+  category: "project",
+  appConfig: true,
+  description:
+    "Set the active tool in the Tools panel (Project.toolType, AE 14.0+): selection|rotate|hand|zoom|panBehind|rect|roundedRect|ellipse|polygon|star|textHorizontal|textVertical|pen|maskFeather|brush|cloneStamp|eraser|puppetPin|puppetStarch|puppetBend|puppetAdvanced|puppetOverlap|cameraUnified|cameraOrbit|cameraTrackXY|cameraTrackZ|cameraOrbitCursor|cameraOrbitScene|cameraOrbitCamera|cameraPanCursor.",
+  params: [
+    { name: "tool", type: "string", description: "Tool name (see description)", required: true },
+  ],
+  toJsx(args) {
+    return `
+            ${TOOL_MAP_JSX}
+            var _arg = ${jsxVal(args.tool)};
+            if (!_tools.hasOwnProperty(_arg)) {
+                if (_missingTools.hasOwnProperty(_arg)) return { ok: false, error: "tool '" + _arg + "' (ToolType." + _missingTools[_arg] + ") is not available on this AE" };
+                return { ok: false, error: "unknown tool '" + _arg + "'" };
+            }
+            try { app.project.toolType = _tools[_arg]; } catch (eTt) { return { ok: false, error: "toolType set failed: " + AE.errText(eTt) }; }
+            return { ok: true, tool: _toolName(app.project.toolType) };
+        `;
+  },
+});
+
+registerOp({
+  name: "project.set_memory_limits",
+  category: "project",
+  appConfig: true,
+  description:
+    "Set AE memory usage limits (app.setMemoryUsageLimits): image cache percent and maximum memory percent. Percentages over 100 are allowed (AE interprets them against installed RAM).",
+  params: [
+    {
+      name: "imageCachePercent",
+      type: "number",
+      description: "Image cache size as % of installed RAM",
+      required: true,
+    },
+    {
+      name: "maxMemoryPercent",
+      type: "number",
+      description: "Maximum AE memory as % of installed RAM",
+      required: true,
+    },
+  ],
+  toJsx(args) {
+    return `
+            try { app.setMemoryUsageLimits(${jsxVal(args.imageCachePercent)}, ${jsxVal(args.maxMemoryPercent)}); } catch (eMl) { return { ok: false, error: "setMemoryUsageLimits failed: " + AE.errText(eMl) }; }
+            return { ok: true, memoryInUse: app.memoryInUse };
+        `;
+  },
+});
+
+registerOp({
+  name: "project.set_multi_frame_rendering",
+  category: "project",
+  appConfig: true,
+  description:
+    "Configure Multi-Frame Rendering (app.setMultiFrameRenderingConfig, AE 22.0+): on/off and the maximum CPU percentage MFR may use.",
+  params: [
+    { name: "enabled", type: "boolean", description: "Enable MFR", required: true },
+    {
+      name: "maxCpuPercent",
+      type: "number",
+      description: "Max CPU % for MFR (1-100, default 90)",
+      required: false,
+      default: 90,
+    },
+  ],
+  toJsx(args) {
+    return `
+            if (typeof app.setMultiFrameRenderingConfig !== "function") return { ok: false, error: "setMultiFrameRenderingConfig needs AE 22.0+" };
+            try { app.setMultiFrameRenderingConfig(${jsxVal(args.enabled)}, ${jsxVal(args.maxCpuPercent ?? 90)}); } catch (eMf) { return { ok: false, error: "setMultiFrameRenderingConfig failed: " + AE.errText(eMf) }; }
+            return { ok: true, enabled: ${jsxVal(args.enabled)}, maxCpuPercent: ${jsxVal(args.maxCpuPercent ?? 90)} };
         `;
   },
 });

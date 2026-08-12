@@ -94,6 +94,7 @@ async function resetToFresh(transport: FileIpcTransport): Promise<void> {
     `,
     label: "reset_fresh",
     timeoutMs: 30_000,
+    undoGroup: false, // crosses a project boundary — see harness.backupAndOpenTestProject
   });
   if (!res.ok) throw new Error("reset failed: " + res.error);
 }
