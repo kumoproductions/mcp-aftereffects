@@ -5,9 +5,19 @@
 
 import { describe, expect, it } from "vitest";
 
-import { getOp } from "../src/registry.js";
+import { getOp, listOps } from "../src/registry.js";
+import { doTool } from "../src/tools/do.js";
 // Importing the operation registry for its registration side effects.
 import "../src/operations/index.js";
+import { nullTransport } from "./helpers/null-transport.js";
+
+/** ae_do unwraps `{ result, context }`, so the canned answer must have both. */
+const OK_RESPONSE = { result: { result: { ok: true }, context: {} } };
+
+interface DoResponse {
+  isError?: boolean;
+  structuredContent?: { error?: { code: string; message: string } };
+}
 
 describe("layer.set_track_matte (AE 23.0 semantics)", () => {
   it("resolves the matte layer by name through AE.findLayerInComp", () => {
@@ -615,6 +625,89 @@ describe("small parity ops", () => {
     expect(move).toContain("_layer.setGuide(50, 0)");
     expect(move).toContain("out of range");
     expect(getOp("layer.list_guides")!.readOnly).toBe(true);
+  });
+});
+
+describe("app-config consent gate", () => {
+  const FLAGGED = [
+    "pref.set",
+    "pref.delete",
+    "pref.set_setting",
+    "project.set_memory_limits",
+    "project.set_multi_frame_rendering",
+    "project.set_default_import_folder",
+    "project.set_tool",
+    "font.set_substitution",
+    "font.set_favorites",
+    "font.set_default_for_script",
+    "render.save_template",
+  ];
+
+  it("every app-config op is flagged and carries the injected confirm param", () => {
+    for (const name of FLAGGED) {
+      const op = getOp(name);
+      expect(op?.appConfig, name).toBe(true);
+      const confirm = op?.params.find((p) => p.name === "confirm");
+      expect(confirm?.required, `${name} confirm param`).toBe(true);
+      expect(confirm?.description).toContain("explicitly requested");
+    }
+    // Reads stay unflagged — consent is about writes.
+    for (const name of ["pref.get", "pref.get_setting", "project.get_tool", "font.get_lists"]) {
+      expect(getOp(name)?.appConfig, name).toBeUndefined();
+    }
+    // The flag list above is exhaustive: no other op may carry it silently.
+    const actual = listOps()
+      .filter((o) => o.appConfig)
+      .map((o) => o.name)
+      .sort();
+    expect(actual).toEqual([...FLAGGED].sort());
+  });
+
+  it("ae_do refuses confirm:false with FORBIDDEN and passes confirm:true through", async () => {
+    const refused = nullTransport(OK_RESPONSE);
+    const res = (await doTool.handler(
+      {
+        operation: "pref.set_setting",
+        args: { section: "S", key: "K", value: "v", confirm: false },
+      },
+      refused,
+    )) as DoResponse;
+    expect(res.isError).toBe(true);
+    expect(res.structuredContent?.error?.code).toBe("FORBIDDEN");
+    expect(res.structuredContent?.error?.message).toContain("explicitly asked");
+    expect(refused.calls, "nothing may reach AE without consent").toHaveLength(0);
+
+    const missing = (await doTool.handler(
+      { operation: "pref.set_setting", args: { section: "S", key: "K", value: "v" } },
+      nullTransport(OK_RESPONSE),
+    )) as DoResponse;
+    expect(missing.isError, "missing confirm fails schema validation").toBe(true);
+
+    const allowed = nullTransport(OK_RESPONSE);
+    const ok = (await doTool.handler(
+      {
+        operation: "pref.set_setting",
+        args: { section: "S", key: "K", value: "v", confirm: true },
+      },
+      allowed,
+    )) as DoResponse;
+    expect(ok.isError).toBeFalsy();
+    expect(allowed.calls).toHaveLength(1);
+  });
+
+  it("batch.run rejects an unconsented app-config child but keeps siblings", () => {
+    const jsx = getOp("batch.run")!.toJsx({
+      ops: [
+        { operation: "layer.create_null", args: { comp: "Main" } },
+        {
+          operation: "pref.set_setting",
+          args: { section: "S", key: "K", value: "v", confirm: false },
+        },
+      ],
+    });
+    expect(jsx).toContain("application configuration");
+    expect(jsx).not.toContain("saveSetting");
+    expect(jsx).toContain("addNull");
   });
 });
 

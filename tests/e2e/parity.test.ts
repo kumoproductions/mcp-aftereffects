@@ -873,7 +873,10 @@ describe("e2e: low-priority parity ops", () => {
 
   it("project.set_tool activates the selection tool", async (ctx) => {
     if (!ready) return ctx.skip();
-    const set = await o().run<{ tool: string }>("project.set_tool", { tool: "selection" });
+    const set = await o().run<{ tool: string }>("project.set_tool", {
+      tool: "selection",
+      confirm: true,
+    });
     expect(set.tool).toBe("selection");
     const got = await o().run<{ tool: string }>("project.get_tool", {});
     expect(got.tool).toBe("selection");
@@ -884,6 +887,7 @@ describe("e2e: low-priority parity ops", () => {
     const res = await o().run<{ enabled: boolean }>("project.set_multi_frame_rendering", {
       enabled: true,
       maxCpuPercent: 90,
+      confirm: true,
     });
     expect(res.enabled).toBe(true);
   });
@@ -892,6 +896,7 @@ describe("e2e: low-priority parity ops", () => {
     if (!ready) return ctx.skip();
     const res = await o().run<{ set: boolean }>("project.set_default_import_folder", {
       path: E2E_SCRATCH_DIR,
+      confirm: true,
     });
     expect(res.set).toBe(true);
   });
@@ -899,8 +904,14 @@ describe("e2e: low-priority parity ops", () => {
   it("pref.set / get / delete round-trip in an MCP-owned section", async (ctx) => {
     if (!ready) return ctx.skip();
     const SEC = "MCP AE E2E Section";
-    await o().run("pref.set", { section: SEC, key: "flag", value: true });
-    await o().run("pref.set", { section: SEC, key: "ratio", value: 1.5, type: "float" });
+    await o().run("pref.set", { section: SEC, key: "flag", value: true, confirm: true });
+    await o().run("pref.set", {
+      section: SEC,
+      key: "ratio",
+      value: 1.5,
+      type: "float",
+      confirm: true,
+    });
     const flag = await o().run<{ exists: boolean; value: boolean }>("pref.get", {
       section: SEC,
       key: "flag",
@@ -914,9 +925,13 @@ describe("e2e: low-priority parity ops", () => {
       type: "float",
     });
     expect(ratio.value).toBeCloseTo(1.5);
-    const del = await o().run<{ deleted: boolean }>("pref.delete", { section: SEC, key: "flag" });
+    const del = await o().run<{ deleted: boolean }>("pref.delete", {
+      section: SEC,
+      key: "flag",
+      confirm: true,
+    });
     expect(del.deleted).toBe(true);
-    await o().run("pref.delete", { section: SEC, key: "ratio" });
+    await o().run("pref.delete", { section: SEC, key: "ratio", confirm: true });
     const gone = await o().run<{ exists: boolean }>("pref.get", {
       section: SEC,
       key: "flag",
@@ -927,7 +942,12 @@ describe("e2e: low-priority parity ops", () => {
 
   it("pref.set_setting / get_setting round-trip", async (ctx) => {
     if (!ready) return ctx.skip();
-    await o().run("pref.set_setting", { section: "MCP AE E2E", key: "marker", value: "on" });
+    await o().run("pref.set_setting", {
+      section: "MCP AE E2E",
+      key: "marker",
+      value: "on",
+      confirm: true,
+    });
     const got = await o().run<{ exists: boolean; value: string }>("pref.get_setting", {
       section: "MCP AE E2E",
       key: "marker",
@@ -944,6 +964,7 @@ describe("e2e: low-priority parity ops", () => {
     if (lists.favorites) {
       const setFav = await o().run<{ favorites: string[] }>("font.set_favorites", {
         families: lists.favorites,
+        confirm: true,
       });
       expect(setFav.favorites).toEqual(lists.favorites);
     }
@@ -955,11 +976,13 @@ describe("e2e: low-priority parity ops", () => {
       const setBack = await o().run<{ font: string }>("font.set_default_for_script", {
         script: "roman",
         postScriptName: roman.font.postScriptName,
+        confirm: true,
       });
       expect(setBack.font).toBe(roman.font.postScriptName);
     }
     const sub = await o().run<{ warnings: string[] }>("font.set_substitution", {
       freezeSync: false,
+      confirm: true,
     });
     expect(sub.warnings).toEqual([]);
   });
@@ -1051,7 +1074,11 @@ describe("e2e: low-priority parity ops", () => {
     // saveAsTemplate would permanently add to the user's template list (no
     // scripting API removes templates), so only the validation path runs here.
     await o().run("render.add_to_queue", { comp: LP });
-    const err = await o().expectRefusal("render.save_template", { type: "nope", name: "x" });
+    const err = await o().expectRefusal("render.save_template", {
+      type: "nope",
+      name: "x",
+      confirm: true,
+    });
     expect(err.message).toContain("render|output");
     const notify = await o().run<{ warnings: string[] }>("render.set_output", {
       queueNotify: false,
