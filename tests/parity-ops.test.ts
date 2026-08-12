@@ -577,6 +577,47 @@ describe("project.new / egp.add_layer / viewer extensions", () => {
   });
 });
 
+describe("small parity ops", () => {
+  it("shape.add_wiggle_transform uses the verified Wiggler matchNames", () => {
+    const jsx = getOp("shape.add_wiggle_transform")!.toJsx({
+      comp: "Main",
+      layer: 1,
+      position: [20, 20],
+      rotation: 15,
+    });
+    expect(jsx).toContain("ADBE Vector Filter - Wiggler");
+    expect(jsx).toContain("ADBE Vector Xform Temporal Freq");
+    expect(jsx).toContain("ADBE Vector Wiggler Position");
+    expect(jsx).toContain("ADBE Vector Wiggler Rotation");
+  });
+
+  it("project.parse_swatch and xmp ops exist with the right mutability", () => {
+    expect(getOp("project.parse_swatch")!.readOnly).toBe(true);
+    expect(getOp("project.get_xmp")!.readOnly).toBe(true);
+    expect(getOp("project.set_xmp")!.readOnly).toBeUndefined();
+    expect(getOp("project.parse_swatch")!.toJsx({ path: "C:/x.ase" })).toContain("parseSwatchFile");
+  });
+
+  it("layer guide ops guard the 16.1 API and range-check indices", () => {
+    const add = getOp("layer.add_guide")!.toJsx({
+      comp: "Main",
+      layer: 1,
+      orientation: "vertical",
+      position: 100,
+    });
+    expect(add).toContain("_layer.addGuide(_orient, 100)");
+    const move = getOp("layer.move_guide")!.toJsx({
+      comp: "Main",
+      layer: 1,
+      guideIndex: 0,
+      position: 50,
+    });
+    expect(move).toContain("_layer.setGuide(50, 0)");
+    expect(move).toContain("out of range");
+    expect(getOp("layer.list_guides")!.readOnly).toBe(true);
+  });
+});
+
 describe("layer.set_props enum coercion", () => {
   it("routes every assignment through AE.coerceLayerPropValue", () => {
     const op = getOp("layer.set_props");
