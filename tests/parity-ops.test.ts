@@ -427,6 +427,54 @@ describe("dropdown menu control", () => {
   });
 });
 
+describe("3D and layer parity ops", () => {
+  it("layer.create_light accepts environment behind a 24.3 probe", () => {
+    const jsx = getOp("layer.create_light")!.toJsx({ comp: "Main", lightType: "environment" });
+    expect(jsx).toContain("LightType.ENVIRONMENT");
+    expect(jsx).toContain("AE 24.3+");
+  });
+
+  it("layer.create_parametric_mesh passes (name, meshType) in that order", () => {
+    const jsx = getOp("layer.create_parametric_mesh")!.toJsx({
+      comp: "Main",
+      name: "Cube 1",
+      meshType: "cube",
+    });
+    expect(jsx).toContain('addParametricMesh("Cube 1", _mtMap[_mtArg])');
+    expect(jsx).toContain("ParametricMeshType.CUBE");
+    expect(jsx).toContain("AE 26.3+");
+  });
+
+  it("comp.set_renderer resolves friendly names against both matchName schemes", () => {
+    const jsx = getOp("comp.set_renderer")!.toJsx({ comp: "Main", renderer: "advanced3d" });
+    expect(jsx).toContain('"ADBE Classic 3d"');
+    expect(jsx).toContain('_friendly.advanced3d = "ADBE Calder"');
+    expect(jsx).toContain('_friendly.advanced3d = "ADBE Advanced 3d"');
+  });
+
+  it("layer.set_parent jump=true routes through setParentWithJump", () => {
+    const jump = getOp("layer.set_parent")!.toJsx({
+      comp: "Main",
+      layer: 2,
+      parentLayer: 1,
+      jump: true,
+    });
+    expect(jump).toContain("setParentWithJump");
+    const noJump = getOp("layer.set_parent")!.toJsx({ comp: "Main", layer: 2, parentLayer: 1 });
+    expect(noJump).not.toContain("setParentWithJump");
+  });
+
+  it("layer.scene_edit_detection maps the four modes", () => {
+    const jsx = getOp("layer.scene_edit_detection")!.toJsx({
+      comp: "Main",
+      layer: 1,
+      mode: "splitPrecomp",
+    });
+    expect(jsx).toContain("SceneEditDetectionMode.SPLIT_PRECOMP");
+    expect(jsx).toContain("AE 22.3+");
+  });
+});
+
 describe("layer.set_props enum coercion", () => {
   it("routes every assignment through AE.coerceLayerPropValue", () => {
     const op = getOp("layer.set_props");
