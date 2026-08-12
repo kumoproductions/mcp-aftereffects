@@ -490,9 +490,65 @@ registerOp({
       description: "software|opencl|cuda|metal",
       required: false,
     },
+    {
+      name: "linearizeWorkingSpace",
+      type: "boolean",
+      description: "Linearize the working color space (AE 16.0+)",
+      required: false,
+    },
+    {
+      name: "compensateForSceneReferredProfiles",
+      type: "boolean",
+      description: "Compensate for scene-referred profiles (AE 16.0+)",
+      required: false,
+    },
+    {
+      name: "displayStartFrame",
+      type: "number",
+      description: "Frame count starts at 0 or 1 (when counting frames)",
+      required: false,
+    },
+    {
+      name: "feetFramesFilmType",
+      type: "string",
+      description: "mm16|mm35 (film type for feet+frames display)",
+      required: false,
+    },
+    {
+      name: "footageTimecodeDisplayStartType",
+      type: "string",
+      description: "start0|useSourceMedia (footage timecode start)",
+      required: false,
+    },
   ],
   toJsx(args) {
     const sets: string[] = [];
+    if (args.linearizeWorkingSpace !== undefined)
+      sets.push(
+        `try { app.project.linearizeWorkingSpace = ${jsxVal(args.linearizeWorkingSpace)}; } catch (e) { _w.push("linearizeWorkingSpace (AE 16.0+): " + AE.errText(e)); }`,
+      );
+    if (args.compensateForSceneReferredProfiles !== undefined)
+      sets.push(
+        `try { app.project.compensateForSceneReferredProfiles = ${jsxVal(args.compensateForSceneReferredProfiles)}; } catch (e) { _w.push("compensateForSceneReferredProfiles (AE 16.0+): " + AE.errText(e)); }`,
+      );
+    if (args.displayStartFrame !== undefined)
+      sets.push(
+        `try { app.project.displayStartFrame = ${jsxVal(args.displayStartFrame)}; } catch (e) { _w.push("displayStartFrame: " + AE.errText(e)); }`,
+      );
+    if (args.feetFramesFilmType !== undefined)
+      sets.push(`
+        try {
+            var _ffMap = { "mm16": FeetFramesFilmType.MM16, "mm35": FeetFramesFilmType.MM35 };
+            if (_ffMap.hasOwnProperty(${jsxVal(args.feetFramesFilmType)})) { app.project.feetFramesFilmType = _ffMap[${jsxVal(args.feetFramesFilmType)}]; }
+            else { _w.push("feetFramesFilmType: pass mm16 or mm35"); }
+        } catch (e) { _w.push("feetFramesFilmType: " + AE.errText(e)); }`);
+    if (args.footageTimecodeDisplayStartType !== undefined)
+      sets.push(`
+        try {
+            var _ftMap = { "start0": FootageTimecodeDisplayStartType.FTCS_START_0, "useSourceMedia": FootageTimecodeDisplayStartType.FTCS_USE_SOURCE_MEDIA };
+            if (_ftMap.hasOwnProperty(${jsxVal(args.footageTimecodeDisplayStartType)})) { app.project.footageTimecodeDisplayStartType = _ftMap[${jsxVal(args.footageTimecodeDisplayStartType)}]; }
+            else { _w.push("footageTimecodeDisplayStartType: pass start0 or useSourceMedia"); }
+        } catch (e) { _w.push("footageTimecodeDisplayStartType: " + AE.errText(e)); }`);
     if (args.bitsPerChannel !== undefined)
       sets.push(
         `try { app.project.bitsPerChannel = ${jsxVal(args.bitsPerChannel)}; } catch (e) { _w.push("bitsPerChannel: " + AE.errText(e)); }`,
@@ -578,7 +634,12 @@ registerOp({
                 framesUseFeetFrames: AE.safeGet(function () { return _p.framesUseFeetFrames; }, null),
                 transparencyGridThumbnails: AE.safeGet(function () { return _p.transparencyGridThumbnails; }, null),
                 gpuAccelType: AE.safeGet(function () { return String(_p.gpuAccelType); }, null),
-                timeDisplayType: AE.safeGet(function () { return _p.timeDisplayType === TimeDisplayType.FRAMES ? "frames" : "timecode"; }, null)
+                timeDisplayType: AE.safeGet(function () { return _p.timeDisplayType === TimeDisplayType.FRAMES ? "frames" : "timecode"; }, null),
+                linearizeWorkingSpace: AE.safeGet(function () { return _p.linearizeWorkingSpace; }, null),
+                compensateForSceneReferredProfiles: AE.safeGet(function () { return _p.compensateForSceneReferredProfiles; }, null),
+                displayStartFrame: AE.safeGet(function () { return _p.displayStartFrame; }, null),
+                feetFramesFilmType: AE.safeGet(function () { return _p.feetFramesFilmType === FeetFramesFilmType.MM16 ? "mm16" : "mm35"; }, null),
+                footageTimecodeDisplayStartType: AE.safeGet(function () { return _p.footageTimecodeDisplayStartType === FootageTimecodeDisplayStartType.FTCS_START_0 ? "start0" : "useSourceMedia"; }, null)
             };
             if (${jsxVal(!!args.includeColorProfiles)}) {
                 try { _out.colorProfiles = _p.listColorProfiles(); } catch (eCp) { _out.colorProfiles = null; }
@@ -743,6 +804,135 @@ registerOp({
     return `
             try { app.project.xmpPacket = ${jsxVal(args.xmp)}; } catch (eX) { return { ok: false, error: "xmpPacket write failed: " + AE.errText(eX) }; }
             return { ok: true, length: app.project.xmpPacket.length };
+        `;
+  },
+});
+
+registerOp({
+  name: "project.set_default_import_folder",
+  category: "project",
+  description:
+    "Set the folder shown by default in the file import dialog (Project.setDefaultImportFolder).",
+  params: [{ name: "path", type: "string", description: "Absolute folder path", required: true }],
+  toJsx(args) {
+    return `
+            var _f = new Folder(${jsxVal(args.path)});
+            if (!_f.exists) return { ok: false, error: "folder not found: " + ${jsxVal(args.path)} };
+            var _res = false;
+            try { _res = app.project.setDefaultImportFolder(_f); } catch (eDf) { return { ok: false, error: "setDefaultImportFolder failed: " + AE.errText(eDf) }; }
+            return { ok: true, set: _res, path: _f.fsName.replace(/\\\\/g, "/") };
+        `;
+  },
+});
+
+/** Friendly-name → ToolType member table, built probe-guarded at runtime. */
+const TOOL_MAP_JSX = `
+    var _tools = {};
+    function _addTool(name, member) {
+        try { if (ToolType[member] !== undefined) _tools[name] = ToolType[member]; } catch (eT) {}
+    }
+    _addTool("selection", "Tool_Arrow"); _addTool("rotate", "Tool_Rotate");
+    _addTool("hand", "Tool_Hand"); _addTool("zoom", "Tool_Magnify");
+    _addTool("panBehind", "Tool_PanBehind");
+    _addTool("rect", "Tool_Rect"); _addTool("roundedRect", "Tool_RoundedRect");
+    _addTool("ellipse", "Tool_Oval"); _addTool("polygon", "Tool_Polygon"); _addTool("star", "Tool_Star");
+    _addTool("textHorizontal", "Tool_TextH"); _addTool("textVertical", "Tool_TextV");
+    _addTool("pen", "Tool_Pen"); _addTool("maskFeather", "Tool_Feather");
+    _addTool("brush", "Tool_Paintbrush"); _addTool("cloneStamp", "Tool_CloneStamp"); _addTool("eraser", "Tool_Eraser");
+    _addTool("puppetPin", "Tool_Pin"); _addTool("puppetStarch", "Tool_PinStarch");
+    _addTool("puppetBend", "Tool_PinBend"); _addTool("puppetAdvanced", "Tool_PinAdvanced"); _addTool("puppetOverlap", "Tool_PinDepth");
+    _addTool("cameraUnified", "Tool_CameraMaya"); _addTool("cameraOrbit", "Tool_CameraOrbit");
+    _addTool("cameraTrackXY", "Tool_CameraTrackXY"); _addTool("cameraTrackZ", "Tool_CameraTrackZ");
+    _addTool("cameraOrbitCursor", "Tool_CameraOrbitCursor"); _addTool("cameraOrbitScene", "Tool_CameraOrbitScene");
+    _addTool("cameraOrbitCamera", "Tool_CameraOrbitCamera"); _addTool("cameraPanCursor", "Tool_CameraPanCursor");
+    function _toolName(v) {
+        for (var _tk in _tools) { if (_tools.hasOwnProperty(_tk) && _tools[_tk] === v) return _tk; }
+        try { return String(v); } catch (eTn) { return null; }
+    }
+`;
+
+registerOp({
+  name: "project.get_tool",
+  category: "project",
+  readOnly: true,
+  description: "Read the active tool in the Tools panel (Project.toolType, AE 14.0+).",
+  params: [],
+  toJsx() {
+    return `
+            ${TOOL_MAP_JSX}
+            var _cur = null;
+            try { _cur = app.project.toolType; } catch (eTt) { return { ok: false, error: "toolType needs AE 14.0+: " + AE.errText(eTt) }; }
+            return { ok: true, tool: _toolName(_cur) };
+        `;
+  },
+});
+
+registerOp({
+  name: "project.set_tool",
+  category: "project",
+  description:
+    "Set the active tool in the Tools panel (Project.toolType, AE 14.0+): selection|rotate|hand|zoom|panBehind|rect|roundedRect|ellipse|polygon|star|textHorizontal|textVertical|pen|maskFeather|brush|cloneStamp|eraser|puppetPin|puppetStarch|puppetBend|puppetAdvanced|puppetOverlap|cameraUnified|cameraOrbit|cameraTrackXY|cameraTrackZ|cameraOrbitCursor|cameraOrbitScene|cameraOrbitCamera|cameraPanCursor.",
+  params: [
+    { name: "tool", type: "string", description: "Tool name (see description)", required: true },
+  ],
+  toJsx(args) {
+    return `
+            ${TOOL_MAP_JSX}
+            var _arg = ${jsxVal(args.tool)};
+            if (!_tools.hasOwnProperty(_arg)) return { ok: false, error: "unknown tool '" + _arg + "'" };
+            try { app.project.toolType = _tools[_arg]; } catch (eTt) { return { ok: false, error: "toolType set failed: " + AE.errText(eTt) }; }
+            return { ok: true, tool: _toolName(app.project.toolType) };
+        `;
+  },
+});
+
+registerOp({
+  name: "project.set_memory_limits",
+  category: "project",
+  description:
+    "Set AE memory usage limits (app.setMemoryUsageLimits): image cache percent and maximum memory percent. Percentages over 100 are allowed (AE interprets them against installed RAM).",
+  params: [
+    {
+      name: "imageCachePercent",
+      type: "number",
+      description: "Image cache size as % of installed RAM",
+      required: true,
+    },
+    {
+      name: "maxMemoryPercent",
+      type: "number",
+      description: "Maximum AE memory as % of installed RAM",
+      required: true,
+    },
+  ],
+  toJsx(args) {
+    return `
+            try { app.setMemoryUsageLimits(${jsxVal(args.imageCachePercent)}, ${jsxVal(args.maxMemoryPercent)}); } catch (eMl) { return { ok: false, error: "setMemoryUsageLimits failed: " + AE.errText(eMl) }; }
+            return { ok: true, memoryInUse: app.memoryInUse };
+        `;
+  },
+});
+
+registerOp({
+  name: "project.set_multi_frame_rendering",
+  category: "project",
+  description:
+    "Configure Multi-Frame Rendering (app.setMultiFrameRenderingConfig, AE 22.0+): on/off and the maximum CPU percentage MFR may use.",
+  params: [
+    { name: "enabled", type: "boolean", description: "Enable MFR", required: true },
+    {
+      name: "maxCpuPercent",
+      type: "number",
+      description: "Max CPU % for MFR (1-100, default 90)",
+      required: false,
+      default: 90,
+    },
+  ],
+  toJsx(args) {
+    return `
+            if (typeof app.setMultiFrameRenderingConfig !== "function") return { ok: false, error: "setMultiFrameRenderingConfig needs AE 22.0+" };
+            try { app.setMultiFrameRenderingConfig(${jsxVal(args.enabled)}, ${jsxVal(args.maxCpuPercent ?? 90)}); } catch (eMf) { return { ok: false, error: "setMultiFrameRenderingConfig failed: " + AE.errText(eMf) }; }
+            return { ok: true, enabled: ${jsxVal(args.enabled)}, maxCpuPercent: ${jsxVal(args.maxCpuPercent ?? 90)} };
         `;
   },
 });
