@@ -36,6 +36,18 @@ export interface Operation {
    */
   readOnly?: boolean;
   /**
+   * True for operations that change the user's After Effects APPLICATION
+   * configuration — preferences, memory limits, font substitution policy,
+   * saved render templates, the active tool. These persist beyond the project
+   * (and mostly beyond the session), so an AI must never call them as a side
+   * effect of ordinary project work. Marking an operation appConfig:
+   *   - injects a required `confirm: true` parameter into its schema, and
+   *   - makes ae_do / batch.run refuse the call unless confirm === true,
+   * with an error that spells out the contract: pass confirm only when the
+   * USER explicitly asked for this configuration change.
+   */
+  appConfig?: boolean;
+  /**
    * Whether this call may run inside the dispatcher's automatic undo group.
    * Omitted means yes, which is right for everything that MUTATES the project.
    * Return false for anything that drives the undo stack itself — Undo and Redo
@@ -51,8 +63,33 @@ export interface Operation {
 
 const operations = new Map<string, Operation>();
 
+/** The consent parameter injected into every appConfig operation. */
+export const APP_CONFIG_CONFIRM_PARAM: OperationParam = {
+  name: "confirm",
+  type: "boolean",
+  description:
+    "Must be true. This operation changes the user's After Effects APPLICATION configuration (it persists beyond the project) — set it only when the user explicitly requested this change, never as a side effect of other work.",
+  required: true,
+};
+
 export function registerOp(op: Operation): void {
+  if (op.appConfig && !op.params.some((p) => p.name === APP_CONFIG_CONFIRM_PARAM.name)) {
+    op.params = [...op.params, APP_CONFIG_CONFIRM_PARAM];
+  }
   operations.set(op.name, op);
+}
+
+/**
+ * Denial text for an appConfig operation called without confirm: true.
+ * Returns null when the call is allowed. Shared by ae_do and batch.run so the
+ * contract reads identically on both paths.
+ */
+export function denyAppConfig(op: Operation, args: Record<string, unknown>): string | null {
+  if (!op.appConfig || args.confirm === true) return null;
+  return (
+    `'${op.name}' changes the user's After Effects application configuration, which persists beyond this project. ` +
+    "It runs only with confirm: true — pass that only when the user explicitly asked for this configuration change."
+  );
 }
 
 export function getOp(name: string): Operation | undefined {

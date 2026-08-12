@@ -3,7 +3,7 @@ import { z } from "zod";
 import { errorResult } from "../errors.js";
 import { summarizeParams, suggestName, validateOpArgs } from "../opschema.js";
 import { denyOperation, denyUnregisteredOperation } from "../policy.js";
-import { AMBIENT_CONTEXT_JSX, getOp, listOps, wantsUndoGroup } from "../registry.js";
+import { AMBIENT_CONTEXT_JSX, denyAppConfig, getOp, listOps, wantsUndoGroup } from "../registry.js";
 import { defineTool, jsonResult, jsxReportedFailure } from "./define-tool.js";
 
 export const doTool = defineTool({
@@ -99,6 +99,17 @@ export const doTool = defineTool({
           hint: `ae_catalog({ category: '${op.category}' }) returns the full parameter reference.`,
         },
       );
+    }
+
+    // App-configuration ops require explicit user consent. The schema above
+    // already demands the confirm param exist; this catches confirm: false,
+    // which type-checks but does not consent.
+    const consent = denyAppConfig(op, validated.value);
+    if (consent) {
+      return errorResult("FORBIDDEN", consent, {
+        details: { operation: op.name, category: op.category },
+        hint: "Ask the user first if they have not explicitly requested this change.",
+      });
     }
 
     // Generate JSX from the operation's toJsx, then append ambient context gathering.

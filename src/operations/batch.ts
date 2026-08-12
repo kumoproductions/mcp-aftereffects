@@ -4,7 +4,7 @@
 
 import { summarizeParams, validateOpArgs } from "../opschema.js";
 import { denyOperation, denyUnregisteredOperation } from "../policy.js";
-import { getOp, jsxVal, registerOp, wantsUndoGroup } from "../registry.js";
+import { denyAppConfig, getOp, jsxVal, registerOp, wantsUndoGroup } from "../registry.js";
 
 registerOp({
   name: "batch.run",
@@ -83,6 +83,14 @@ registerOp({
           validated.issues.map((issue) => `${issue.path} — ${issue.message}`).join("; ") +
           ` (expects ${summarizeParams(op.params).join(", ") || "no parameters"})`;
         opBlocks.push(rejectBlock(i, detail, stopOnError));
+        continue;
+      }
+
+      // Batching must not be a way to smuggle an app-configuration change past
+      // the consent gate either — same check as the top-level ae_do path.
+      const consent = denyAppConfig(op, validated.value);
+      if (consent) {
+        opBlocks.push(rejectBlock(i, consent, stopOnError));
         continue;
       }
 
