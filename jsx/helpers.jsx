@@ -440,13 +440,13 @@ AE.safeGet = function (fn, fallback) {
     try { var v = fn(); return (v === undefined) ? fallback : v; } catch (e) { return fallback; }
 };
 
-AE.valueToJson = function (val) {
+AE.valueToJson = function (val, _depth) {
     if (val === null || val === undefined) return null;
     var t = typeof val;
     if (t === "number" || t === "boolean" || t === "string") return val;
     if (val instanceof Array) {
         var arr = [];
-        for (var i = 0; i < val.length; i++) arr.push(AE.valueToJson(val[i]));
+        for (var i = 0; i < val.length; i++) arr.push(AE.valueToJson(val[i], (_depth || 0) + 1));
         return arr;
     }
     // TextDocument special-case — check before generic array-like because
@@ -501,8 +501,30 @@ AE.valueToJson = function (val) {
     // objects above so we don't accidentally treat them as arrays.
     if (val.length !== undefined && typeof val.length === "number") {
         var out = [];
-        for (var j = 0; j < val.length; j++) out.push(AE.valueToJson(val[j]));
+        for (var j = 0; j < val.length; j++) out.push(AE.valueToJson(val[j], (_depth || 0) + 1));
         return out;
+    }
+    // Generic object (swatch data, usedFonts usage records, design-axis
+    // entries). Depth-capped and function-skipping: AE host objects reachable
+    // from here can fan out into the whole project graph, and their methods
+    // enumerate in for..in.
+    var d = typeof _depth === "number" ? _depth : 0;
+    if (d < 4) {
+        var objOut = {};
+        var got = false;
+        var kept = 0;
+        for (var k in val) {
+            if (kept >= 64) break;
+            var v2;
+            try { v2 = val[k]; } catch (eK) { continue; }
+            if (typeof v2 === "function") continue;
+            var enc = AE.valueToJson(v2, d + 1);
+            if (enc === null && v2 !== null && v2 !== undefined) continue;
+            objOut[k] = enc;
+            got = true;
+            kept++;
+        }
+        if (got) return objOut;
     }
     return null;
 };
