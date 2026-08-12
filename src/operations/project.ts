@@ -16,6 +16,13 @@ registerOp({
       required: false,
     },
   ],
+  // Runs OUTSIDE the dispatcher's undo group, same class as undo/redo:
+  // replacing the project while a group is open orphans that group — the
+  // endUndoGroup after app.open() closes nothing that exists anymore. AE 26
+  // flags it with an async "UndoGroup Mismatch" dialog and undo stays broken
+  // for the rest of the session. An undo group is meaningless across a
+  // project boundary anyway: closing destroys the undo stack it would guard.
+  undoGroup: () => false,
   toJsx(args) {
     return `
             if (${jsxVal(!!args.save)} && app.project.file) app.project.save();
@@ -669,6 +676,8 @@ registerOp({
       default: false,
     },
   ],
+  // Outside the undo group for the same reason as project.open above.
+  undoGroup: () => false,
   toJsx(args) {
     // close(DO_NOT_SAVE_CHANGES) BEFORE newProject: calling newProject on a
     // dirty project pops the "Save changes?" modal, which blocks all scripting
