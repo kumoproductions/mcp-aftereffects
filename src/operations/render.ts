@@ -147,9 +147,19 @@ registerOp({
       description: "Per-item Notify checkbox (AE 22.0+)",
       required: false,
     },
+    {
+      name: "queueNotify",
+      type: "boolean",
+      description: "QUEUE-WIDE Notify checkbox (RenderQueue.queueNotify, AE 22.0+)",
+      required: false,
+    },
   ],
   toJsx(args) {
     const rqiSets: string[] = [];
+    if (args.queueNotify !== undefined)
+      rqiSets.push(
+        `try { rq.queueNotify = ${jsxVal(args.queueNotify)}; } catch (eQq) { _w.push("queueNotify (AE 22.0+): " + AE.errText(eQq)); }`,
+      );
     if (args.renderTemplate !== undefined)
       rqiSets.push(
         `try { _rqi.applyTemplate(${jsxVal(args.renderTemplate)}); } catch (eRt) { _w.push("renderTemplate: " + AE.errText(eRt)); }`,
@@ -488,6 +498,53 @@ registerOp({
             if (!_can) return { ok: false, error: "cannot queue in AME — is Adobe Media Encoder installed and at least one item queued?" };
             rq.queueInAME(${jsxVal(!!args.renderImmediately)});
             return { ok: true, sent: rq.numItems, renderImmediately: ${jsxVal(!!args.renderImmediately)} };
+        `;
+  },
+});
+
+registerOp({
+  name: "render.save_template",
+  category: "render",
+  description:
+    "Save a queue item's current render settings, or an output module's current settings, as a named template (saveAsTemplate) for reuse via render.set_output.",
+  params: [
+    {
+      name: "type",
+      type: "string",
+      description: "render (RenderQueueItem settings) | output (OutputModule settings)",
+      required: true,
+    },
+    { name: "name", type: "string", description: "Template name to save under", required: true },
+    {
+      name: "queueIndex",
+      type: "number",
+      description: "1-based queue item index (default: last item)",
+      required: false,
+    },
+    {
+      name: "outputModuleIndex",
+      type: "number",
+      description: "1-based output module index (type=output only, default 1)",
+      required: false,
+      default: 1,
+    },
+  ],
+  toJsx(args) {
+    return `
+            ${jsxRqItemPreamble(args)}
+            var _type = ${jsxVal(args.type)};
+            if (_type === "render") {
+                try { _rqi.saveAsTemplate(${jsxVal(args.name)}); } catch (eSt) { return { ok: false, error: "saveAsTemplate failed: " + AE.errText(eSt) }; }
+                return { ok: true, type: "render", name: ${jsxVal(args.name)} };
+            }
+            if (_type === "output") {
+                var _om = null;
+                try { _om = _rqi.outputModule(${jsxVal(args.outputModuleIndex ?? 1)}); } catch (eOm) {}
+                if (!_om) return { ok: false, error: "no output module at index " + ${jsxVal(args.outputModuleIndex ?? 1)} };
+                try { _om.saveAsTemplate(${jsxVal(args.name)}); } catch (eSo) { return { ok: false, error: "saveAsTemplate failed: " + AE.errText(eSo) }; }
+                return { ok: true, type: "output", name: ${jsxVal(args.name)} };
+            }
+            return { ok: false, error: "type must be render|output" };
         `;
   },
 });
