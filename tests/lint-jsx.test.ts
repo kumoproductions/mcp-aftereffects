@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { lintCodegenDir, lintCodegenFile } from "./helpers/lint-codegen.js";
-import { lintJsxDir } from "./helpers/lint-jsx.js";
+import { findTernaryChains, lintJsxDir } from "./helpers/lint-jsx.js";
 
 const JSX_DIR = fileURLToPath(new URL("../jsx/", import.meta.url));
 // Whole of src/, not just operations + tools: the `jsx*` encoder helpers the
@@ -65,5 +65,49 @@ describe("generated-JSX injection lint", () => {
     // `_w.push`, `_layer`, `AE.errText` and the like must not be swept up: the
     // rule keys off catch-parameter names, not "starts with e".
     expect(findings.length).toBe(2);
+  });
+
+  it("catches a chained ternary in generated JSX, and only the unparenthesized form", () => {
+    // ExtendScript parses ?: left-associatively — the chain that labelled
+    // every ae_context item "Folder". The parenthesized twin is correct and
+    // must stay clean.
+    const fixture = fileURLToPath(new URL("./fixtures/bad-codegen.fixture.ts", import.meta.url));
+    const findings = lintCodegenFile(fixture).filter((f) =>
+      f.message.includes("LEFT-associatively"),
+    );
+    expect(findings.length).toBe(1);
+    expect(findings[0].text).toContain('? "Comp" :');
+    expect(findings[0].text).not.toContain("((it instanceof FolderItem)");
+  });
+});
+
+describe("findTernaryChains", () => {
+  const chains = (code: string) => findTernaryChains(code).length;
+
+  it("flags the left-associativity trap", () => {
+    expect(chains("var t = a ? 1 : b ? 2 : 3;")).toBeGreaterThan(0);
+    expect(chains("x = a ? 1 : b ? 2 : c ? 3 : 4;")).toBeGreaterThan(0);
+    // Chain inside an object literal value (the shipped ae_context shape).
+    expect(chains("var o = { type: a ? 1 : b ? 2 : 3 };")).toBeGreaterThan(0);
+    // Chain as a call argument.
+    expect(chains("f(a ? 1 : b ? 2 : 3);")).toBeGreaterThan(0);
+    // Unparenthesized conditional in the THEN branch is just as ambiguous.
+    expect(chains("var t = a ? b ? 1 : 2 : 3;")).toBeGreaterThan(0);
+    // Multi-line chains must not escape.
+    expect(chains("var t = a ? 1 :\n    b ? 2 : 3;")).toBeGreaterThan(0);
+  });
+
+  it("stays quiet on correct forms", () => {
+    expect(chains("var t = a ? 1 : 2;")).toBe(0);
+    // Parenthesized nesting is the sanctioned fix.
+    expect(chains("var t = a ? 1 : (b ? 2 : 3);")).toBe(0);
+    expect(chains("var t = a ? (b ? 1 : 2) : 3;")).toBe(0);
+    // Independent ternaries: statement-, argument-, and property-separated.
+    expect(chains("var t = a ? 1 : 2; var u = b ? 3 : 4;")).toBe(0);
+    expect(chains("f(a ? 1 : 2, b ? 3 : 4);")).toBe(0);
+    expect(chains("var o = { x: a ? 1 : 2, y: b ? 3 : 4 };")).toBe(0);
+    expect(chains("var o = {\n  x: a ? 1 : 2,\n  y: b ? 3 : 4\n};")).toBe(0);
+    // Ternary inside a function call inside a branch.
+    expect(chains("var t = a ? f(b ? 1 : 2) : 3;")).toBe(0);
   });
 });

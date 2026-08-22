@@ -128,6 +128,10 @@ export const doTool = defineTool({
         ${AMBIENT_CONTEXT_JSX}
         return { result: _opResult, context: _ctx };
     `;
+    // Lines of wrapper ABOVE the operation code, for mapping the dispatcher's
+    // reported error line back to it. Measured, not hardcoded, so an edit to
+    // the template above cannot silently desync the arithmetic.
+    const wrapperLinesAboveUserJsx = countLines(wrappedCode.slice(0, wrappedCode.indexOf(userJsx)));
 
     const result = await transport.execute({
       code: wrappedCode,
@@ -145,10 +149,21 @@ export const doTool = defineTool({
 
     if (!result.ok) {
       return errorResult(result.errorCode ?? "TRANSPORT", result.error ?? "unknown failure", {
-        details: { operation: op.name },
+        details: {
+          operation: op.name,
+          ...jsxErrorLocation(result.line, wrappedCode, wrapperLinesAboveUserJsx, op.name),
+        },
         stack: result.stack,
         logs: result.logs,
         durationMs: result.durationMs,
+        ...(typeof result.line === "number" && op.name === "eval.run"
+          ? {
+              hint:
+                "The '(line N)' in the message counts lines of the ASSEMBLED script, not your code — " +
+                "details.userCodeLine is the 1-based line in the code you passed, and details.codeExcerpt " +
+                "shows the failing spot.",
+            }
+          : {}),
       });
     }
 
@@ -186,4 +201,52 @@ export const doTool = defineTool({
 function isBatchShaped(opResult: unknown): boolean {
   if (opResult === null || typeof opResult !== "object") return false;
   return Array.isArray((opResult as { results?: unknown }).results);
+}
+
+function countLines(text: string): number {
+  let n = 0;
+  for (let i = 0; i < text.length; i++) if (text[i] === "\n") n++;
+  return n;
+}
+
+/**
+ * new Function's synthesized `function anonymous(...) {` header occupies
+ * line 1 of the compiled body, so ExtendScript reports the wrapped code's
+ * line N as N+1. Verified empirically on AE 26.3 (ExtendScript 4.5.6).
+ */
+const NEW_FUNCTION_HEADER_LINES = 1;
+
+/**
+ * Map the dispatcher's error line back to the code the caller can actually
+ * see. Returns `errorLine` (raw, as reported), `userCodeLine` (1-based line
+ * in the operation's own JSX — for eval.run, the caller's script), and
+ * `codeExcerpt` (the failing line ±2 of the assembled script). Empty when the
+ * dispatcher predates the field or the script failed before compiling.
+ */
+function jsxErrorLocation(
+  line: number | null | undefined,
+  wrappedCode: string,
+  wrapperLinesAboveUserJsx: number,
+  opName: string,
+): Record<string, unknown> {
+  if (typeof line !== "number" || !Number.isFinite(line)) return {};
+  const wrappedLine = line - NEW_FUNCTION_HEADER_LINES; // 1-based into wrappedCode
+  const out: Record<string, unknown> = { errorLine: line };
+  const userLine = wrappedLine - wrapperLinesAboveUserJsx;
+  // Only eval.run's code is something the caller wrote line-by-line; for other
+  // operations the excerpt is the useful part and a "user line" would mislead.
+  if (opName === "eval.run" && userLine >= 1) out.userCodeLine = userLine;
+  const lines = wrappedCode.split("\n");
+  if (wrappedLine >= 1 && wrappedLine <= lines.length) {
+    const from = Math.max(1, wrappedLine - 2);
+    const to = Math.min(lines.length, wrappedLine + 2);
+    const excerpt: string[] = [];
+    for (let n = from; n <= to; n++) {
+      excerpt.push(
+        `${n === wrappedLine ? ">" : " "} ${n - wrapperLinesAboveUserJsx}| ${lines[n - 1]}`,
+      );
+    }
+    out.codeExcerpt = excerpt.join("\n");
+  }
+  return out;
 }

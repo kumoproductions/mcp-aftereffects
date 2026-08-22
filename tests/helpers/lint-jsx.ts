@@ -272,6 +272,73 @@ const rules: LintRule[] = [
   },
 ];
 
+/**
+ * Detect CHAINED ternaries — `a ? b : c ? d : e` without parentheses around
+ * the nested conditional. ExtendScript parses the conditional operator
+ * LEFT-associatively (verified on AE 26.3 / ExtendScript 4.5.6): that chain
+ * runs as `(a ? b : c) ? d : e`, so every branch except the final else
+ * collapses into whichever operand the LAST condition selects. This shipped a
+ * real bug — ae_context labelled every project item "Folder". `a ? b : (c ?
+ * d : e)` and if/else are both fine.
+ *
+ * `text` must already have comments and string literals stripped. Returns
+ * 0-based indices into `text` where the offending `?` sits. The scan tracks
+ * bracket depth; a second `?` at the same depth while a ternary at that depth
+ * is open or completed (not yet reset by `,` `;` or an object-key `:`) is a
+ * chain. Regex literals are not stripped — a lone `?` inside one cannot
+ * complete the `? … : … ?` sequence at one depth, so they do not false-positive.
+ */
+export function findTernaryChains(text: string): number[] {
+  interface DepthState {
+    open: number;
+    completed: boolean;
+  }
+  const hits: number[] = [];
+  const stack: DepthState[] = [{ open: 0, completed: false }];
+  const top = (): DepthState => stack[stack.length - 1];
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === "(" || ch === "[" || ch === "{") {
+      stack.push({ open: 0, completed: false });
+      continue;
+    }
+    if (ch === ")" || ch === "]" || ch === "}") {
+      if (stack.length > 1) stack.pop();
+      continue;
+    }
+    const s = top();
+    if (ch === "?") {
+      if (s.open > 0 || s.completed) hits.push(i);
+      else s.open = 1;
+      continue;
+    }
+    if (ch === ":") {
+      if (s.open > 0) {
+        s.open--;
+        s.completed = true;
+      } else {
+        // Object-key colon: a fresh value context begins.
+        s.completed = false;
+      }
+      continue;
+    }
+    if (ch === "," || ch === ";") {
+      s.open = 0;
+      s.completed = false;
+    }
+  }
+  return hits;
+}
+
+export const TERNARY_CHAIN_RULE = {
+  id: "es3-ternary-chain",
+  description:
+    "Chained ternary (`a ? b : c ? d : e`) — ExtendScript parses ?: LEFT-associatively, " +
+    "so this evaluates as `(a ? b : c) ? d : e` and picks the wrong branch. " +
+    "Parenthesize the nested conditional or use if/else.",
+  severity: "error" as const,
+};
+
 function stripCommentsAndStrings(line: string): string {
   // Strip JS // comments first
   const commentIdx = findFirstCommentStart(line);
@@ -284,7 +351,7 @@ function stripCommentsAndStrings(line: string): string {
   return code;
 }
 
-function findFirstCommentStart(line: string): number {
+export function findFirstCommentStart(line: string): number {
   // Find first `//` that is not inside a string literal.
   let inSingle = false;
   let inDouble = false;
@@ -317,9 +384,11 @@ export function lintJsxFile(filePath: string): LintFinding[] {
   // Strip /* */ block comments across the whole file before line-scanning
   const stripped = raw.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "));
   const strippedLines = stripped.split(/\r?\n/);
+  const cleanLines: string[] = [];
   for (let i = 0; i < strippedLines.length; i++) {
     const originalLine = lines[i] ?? "";
     const cleanLine = stripCommentsAndStrings(strippedLines[i] ?? "");
+    cleanLines.push(cleanLine);
     // Special case: template literal check wants the RAW line (strings are stripped)
     for (const r of rules) {
       const target = r.id === "es6-template-string" ? originalLine : cleanLine;
@@ -334,6 +403,19 @@ export function lintJsxFile(filePath: string): LintFinding[] {
         });
       }
     }
+  }
+  // Ternary chains span lines, so this rule scans the whole cleaned text.
+  const cleanText = cleanLines.join("\n");
+  for (const offset of findTernaryChains(cleanText)) {
+    const line = cleanText.slice(0, offset).split("\n").length;
+    findings.push({
+      file: filePath,
+      line,
+      rule: TERNARY_CHAIN_RULE.id,
+      severity: TERNARY_CHAIN_RULE.severity,
+      description: TERNARY_CHAIN_RULE.description,
+      text: (lines[line - 1] ?? "").trim(),
+    });
   }
   return findings;
 }

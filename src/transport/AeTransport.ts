@@ -53,6 +53,14 @@ export interface EvalResult {
    * threw" (JSX_THROW) without parsing `error` prose.
    */
   errorCode: AeErrorCode | null;
+  /**
+   * 1-based line in the compiled request body where the script threw, when
+   * the dispatcher reported one (JSX_THROW only). The compiled body = the
+   * wrapped code handed to `execute`, offset by new Function's synthesized
+   * header on line 1 — so `line - 1` indexes into that wrapped code, and
+   * callers that assembled it can map further down to what they embedded.
+   */
+  line?: number | null;
   /** Optional stack trace from ExtendScript. */
   stack: string | null;
   /** Breadcrumb messages pushed via `log(...)` inside the JSX. */

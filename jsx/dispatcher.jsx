@@ -242,6 +242,12 @@
             phase: "dispatch",
             result: null,
             error: null,
+            // 1-based line in the COMPILED function body where execution threw
+            // (ExtendScript Error.line). The body = the wrapped request code,
+            // and new Function's synthesized header occupies line 1, so this is
+            // NOT a line in what the caller wrote — the Node side owns the
+            // arithmetic that maps it back (it knows the wrapper layout).
+            line: null,
             stack: null,
             logs: []
         };
@@ -418,6 +424,9 @@
             response.ok = false;
             response.error = describeError(eExec);
             response.stack = errStack(eExec);
+            try {
+                if (eExec && eExec.line !== undefined && eExec.line !== null) response.line = Number(eExec.line);
+            } catch (eLine) { /* line stays null */ }
         } finally {
             if (undoOpen) {
                 try { app.endUndoGroup(); } catch (eEnd) { /* ignore */ }

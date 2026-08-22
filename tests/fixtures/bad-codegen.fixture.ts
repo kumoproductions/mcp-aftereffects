@@ -45,3 +45,25 @@ export function safeSolid(args: Record<string, unknown>, jsxVal: (v: unknown) =>
         return { ok: true };
     `;
 }
+
+/**
+ * A chained ternary in generated ExtendScript. ExtendScript parses ?:
+ * LEFT-associatively, so this labels every item with the LAST branch — the
+ * exact bug that shipped in ae_context. The lint must report it.
+ */
+export function badTernaryChain(): string {
+  return `
+        var it = app.project.item(1);
+        var type = (it instanceof CompItem) ? "Comp" : (it instanceof FolderItem) ? "Folder" : "Other";
+        return { ok: true, type: type };
+    `;
+}
+
+/** The parenthesized form parses correctly and must NOT be reported. */
+export function safeNestedTernary(): string {
+  return `
+        var it = app.project.item(1);
+        var type = (it instanceof CompItem) ? "Comp" : ((it instanceof FolderItem) ? "Folder" : "Other");
+        return { ok: true, type: type };
+    `;
+}

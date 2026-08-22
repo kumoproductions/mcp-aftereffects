@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`ae_layer_info` / `layer.info` gain `detail: 'summary'`** — drops properties still at their default value (no keyframes, no expression, never touched), typically shrinking a whole-comp audit by 5–10×. Group skeletons are kept, so the existence of effects and masks still shows.
+- **Keyframes now carry easing.** Serialized keyframes gain `inInterpName`/`outInterpName` (`"linear"|"bezier"|"hold"` — the numeric enum codes stay for the import contract) and, on bezier keys, `inEase`/`outEase` (per-dimension `{speed, influence}`). `ae_project_import_json` applies the ease on import, so export→import round trips no longer flatten easing.
+- **`ae_render_frame` accepts `times`** — several frames in one call (the motion-check pattern). Files land at `<outPath stem>_<index>.png`, reported index-aligned in `frames`, and the transient OCIO capture layer is set up once for all of them.
+- **Script errors now locate themselves.** Failed `ae_do` calls report `details.errorLine` (raw), `details.userCodeLine` (for `eval.run`: the 1-based line in the code you passed — the raw number is offset by the execution wrapper and was pointing 3 lines off), and `details.codeExcerpt` (the failing line ±2).
+- **New eval helpers**: `AE.setEase(prop, keyIndex, inInf, outInf, inSpeed?, outSpeed?)` (handles the spatial=1/per-dimension `KeyframeEase` bookkeeping), `AE.rect` / `AE.ellipse` (vector group + path + fill/stroke in one call — shape construction scripts halve), `AE.ensureParentDir(path)`, `AE.itemTypeName(item)`. `ae_context` lists them and gains a `tips` array (reparenting with keys → `layer.set_parent jump:true`, easing, summary audits).
+- **Unknown render/output template names warn with the available list.** Template names are localized ("Lossless" does not exist on a Japanese AE); `render.set_output` now retries case-insensitively against the target's own template list and, failing that, embeds that list in the warning — no separate `render.list_templates` round trip needed to self-correct.
+
+### Fixed
+
+- **Every project item was reported as `"Folder"`** by `ae_context` (and `ae_project_info`'s `activeItem`). ExtendScript parses chained ternaries **left-associatively** — `a ? b : c ? d : e` runs as `(a ? b : c) ? d : e` — so the type chain always fell through to its last branch (verified on AE 26.3 / ExtendScript 4.5.6). Serializers now go through `AE.itemTypeName`, `ae_context` item types use the same `CompItem`/`FootageItem`/`FolderItem` vocabulary as `ae_project_info`, and a lint rule now rejects chained ternaries in all generated ExtendScript.
+- **The render queue no longer dies with "Directory does not exist".** `render.add_to_queue`, `render.set_output`, and `render.start` create missing output directories, matching what `ae_render_frame` always did.
+
 ## [0.2.0] - 2026-08-12
 
 ### Added
