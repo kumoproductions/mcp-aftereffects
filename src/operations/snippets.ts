@@ -30,10 +30,10 @@ export const COMP_INFO_FN = `
     }
 `;
 
-/** Defines `_layerFull(l, incl)` → the ae_layer_info payload for one layer. */
+/** Defines `_layerFull(l, incl, detail)` → the ae_layer_info payload for one layer. */
 export const LAYER_FULL_FN = `
-    function _layerFull(l, incl) {
-        var _lfOut = AE.serializeLayerFull(l, { includeProperties: incl });
+    function _layerFull(l, incl, detail) {
+        var _lfOut = AE.serializeLayerFull(l, { includeProperties: incl, detail: detail });
         _lfOut.ok = true;
         _lfOut.found = true;
         return _lfOut;
@@ -45,10 +45,8 @@ export const RENDER_FRAME_FN = `
     function _renderFrame(c, t0, outAbs, useDst) {
         var _rfT = t0;
         if (useDst) _rfT = _rfT + c.displayStartTime;
-        var _rfFile = new File(outAbs);
+        var _rfFile = AE.ensureParentDir(outAbs);
         try {
-            var _rfParent = _rfFile.parent;
-            if (_rfParent && !_rfParent.exists) _rfParent.create();
             c.saveFrameToPng(_rfT, _rfFile);
             return {
                 ok: true,

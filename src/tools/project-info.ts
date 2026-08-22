@@ -13,7 +13,7 @@ const CODE = `
         numItems: proj.numItems,
         bitsPerChannel: proj.bitsPerChannel,
         timeDisplayType: String(proj.timeDisplayType),
-        activeItem: active ? { id: active.id, name: active.name, typeName: (active instanceof CompItem) ? "CompItem" : (active instanceof FootageItem) ? "FootageItem" : (active instanceof FolderItem) ? "FolderItem" : "Other" } : null,
+        activeItem: active ? { id: active.id, name: active.name, typeName: AE.itemTypeName(active) } : null,
         items: items
     };
 `;

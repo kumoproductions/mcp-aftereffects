@@ -19,7 +19,7 @@ registerOp({
     const outputPathJsx = args.outputPath
       ? `
                 try {
-                    _rqi.outputModules[1].file = new File(${jsxVal(args.outputPath)});
+                    _rqi.outputModules[1].file = AE.ensureParentDir(${jsxVal(args.outputPath)});
                     _result.outputPath = ${jsxVal(args.outputPath)};
                 } catch(e) { _result.outputWarning = "could not set output path: " + AE.errText(e); }
             `
@@ -37,12 +37,26 @@ registerOp({
 registerOp({
   name: "render.start",
   category: "render",
-  description: "Start rendering the render queue. Blocks until complete.",
+  description:
+    "Start rendering the render queue. Blocks until complete. Missing output directories are created first (AE itself fails with 'Directory does not exist').",
   params: [],
   toJsx() {
     return `
             var rq = app.project.renderQueue;
             if (rq.numItems === 0) return { ok: false, error: "render queue is empty" };
+            // AE does not create output folders — rq.render() dies with
+            // "Directory does not exist" — so create them for every item that
+            // is going to render. ae_render_frame already behaved this way.
+            for (var _ri = 1; _ri <= rq.numItems; _ri++) {
+                try {
+                    var _it = rq.item(_ri);
+                    if (!_it.render) continue;
+                    for (var _oi = 1; _oi <= _it.numOutputModules; _oi++) {
+                        var _f = _it.outputModule(_oi).file;
+                        if (_f) AE.ensureParentDir(_f);
+                    }
+                } catch (eDir) { /* creation failures surface from render() itself */ }
+            }
             rq.render();
             return { ok: true, rendered: rq.numItems };
         `;
@@ -173,9 +187,7 @@ registerOp({
         `try { rq.queueNotify = ${jsxVal(args.queueNotify)}; } catch (eQq) { _w.push("queueNotify (AE 22.0+): " + AE.errText(eQq)); }`,
       );
     if (args.renderTemplate !== undefined)
-      rqiSets.push(
-        `try { _rqi.applyTemplate(${jsxVal(args.renderTemplate)}); } catch (eRt) { _w.push("renderTemplate: " + AE.errText(eRt)); }`,
-      );
+      rqiSets.push(`_applyTpl(_rqi, ${jsxVal(args.renderTemplate)}, "renderTemplate");`);
     if (args.timeSpanStart !== undefined)
       rqiSets.push(
         `try { _rqi.timeSpanStart = ${jsxVal(args.timeSpanStart)}; } catch (eTs) { _w.push("timeSpanStart: " + AE.errText(eTs)); }`,
@@ -207,12 +219,10 @@ registerOp({
       );
     const omSets: string[] = [];
     if (args.outputTemplate !== undefined)
-      omSets.push(
-        `try { _om.applyTemplate(${jsxVal(args.outputTemplate)}); } catch (eOt) { _w.push("outputTemplate: " + AE.errText(eOt)); }`,
-      );
+      omSets.push(`_applyTpl(_om, ${jsxVal(args.outputTemplate)}, "outputTemplate");`);
     if (args.outputPath !== undefined)
       omSets.push(
-        `try { _om.file = new File(${jsxVal(args.outputPath)}); } catch (eOp) { _w.push("outputPath: " + AE.errText(eOp)); }`,
+        `try { _om.file = AE.ensureParentDir(${jsxVal(args.outputPath)}); } catch (eOp) { _w.push("outputPath: " + AE.errText(eOp)); }`,
       );
     if (args.postRenderAction !== undefined)
       omSets.push(`
@@ -230,6 +240,23 @@ registerOp({
     return `
             ${jsxRqItemPreamble(args)}
             var _w = [];
+            // Template names are LOCALIZED ("Lossless" does not exist on a
+            // Japanese AE). Exact name first, then a case-insensitive scan of
+            // the target's own template list; when nothing matches, the
+            // warning carries that list so the caller can self-correct
+            // without a separate render.list_templates round trip.
+            function _applyTpl(target, name, label) {
+                try { target.applyTemplate(name); return; } catch (eT1) {}
+                var _avail = [];
+                try { _avail = target.templates; } catch (eT2) {}
+                var _want = String(name).toLowerCase();
+                for (var _ti = 0; _ti < _avail.length; _ti++) {
+                    if (String(_avail[_ti]).toLowerCase() === _want) {
+                        try { target.applyTemplate(_avail[_ti]); return; } catch (eT3) {}
+                    }
+                }
+                _w.push(label + ": no template named '" + name + "' — available: " + _avail.join(" | "));
+            }
             ${rqiSets.join("\n")}
             var _om = null;
             try { _om = _rqi.outputModule(${jsxVal(args.outputModuleIndex ?? 1)}); } catch (eOm) {}

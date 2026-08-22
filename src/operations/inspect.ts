@@ -29,7 +29,7 @@ registerOp({
   name: "layer.info",
   category: "layer",
   description:
-    "Full layer info incl. property trees and keyframes (same payload as ae_layer_info). Layer by 1-based index or name. includeProperties=false for the cheap summary.",
+    "Full layer info incl. property trees and keyframes (same payload as ae_layer_info). Layer by 1-based index or name. detail='summary' drops default-value properties; includeProperties=false skips the tree entirely.",
   params: [
     { name: "comp", type: "any", description: "Comp name or id", required: true },
     {
@@ -45,13 +45,21 @@ registerOp({
       required: false,
       default: true,
     },
+    {
+      name: "detail",
+      type: "string",
+      description:
+        "full|summary — 'summary' omits properties still at their default value (default full)",
+      required: false,
+      default: "full",
+    },
   ],
   readOnly: true,
   toJsx(args) {
     return `
             ${LAYER_FULL_FN}
             ${jsxCompLayerPreamble(args)}
-            return _layerFull(_layer, ${jsxVal(args.includeProperties !== false)});
+            return _layerFull(_layer, ${jsxVal(args.includeProperties !== false)}, ${jsxVal(args.detail ?? "full")});
         `;
   },
 });

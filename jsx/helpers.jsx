@@ -290,11 +290,19 @@ AE.coerceLayerPropValue = function (key, val) {
 
 // ---------- Basic serialization ----------
 
+// Canonical item type label. An if/else chain, NOT a chained ternary:
+// ExtendScript parses `a ? b : c ? d : e` LEFT-associatively — as
+// `(a ? b : c) ? d : e` — so a ternary chain here would label every
+// item with the last branch. (Verified on AE 26.3 / ExtendScript 4.5.6.)
+AE.itemTypeName = function (item) {
+    if (item instanceof CompItem) return "CompItem";
+    if (item instanceof FolderItem) return "FolderItem";
+    if (item instanceof FootageItem) return "FootageItem";
+    return "UnknownItem";
+};
+
 AE.serializeItemSummary = function (item) {
-    var type = "UnknownItem";
-    if (item instanceof FolderItem) type = "FolderItem";
-    else if (item instanceof CompItem) type = "CompItem";
-    else if (item instanceof FootageItem) type = "FootageItem";
+    var type = AE.itemTypeName(item);
     var out = {
         id: item.id,
         name: item.name,
@@ -435,6 +443,15 @@ AE.PROPERTY_VALUE_TYPE_NAMES = {};
     } catch (e) { /* older AE: some enum members might be absent */ }
 })();
 
+AE.KEY_INTERP_NAMES = {};
+(function buildKitNames() {
+    try {
+        AE.KEY_INTERP_NAMES[KeyframeInterpolationType.LINEAR] = "linear";
+        AE.KEY_INTERP_NAMES[KeyframeInterpolationType.BEZIER] = "bezier";
+        AE.KEY_INTERP_NAMES[KeyframeInterpolationType.HOLD] = "hold";
+    } catch (e) { /* older AE */ }
+})();
+
 // Safely call a getter that may throw or return undefined. Returns the fallback on any failure.
 AE.safeGet = function (fn, fallback) {
     try { var v = fn(); return (v === undefined) ? fallback : v; } catch (e) { return fallback; }
@@ -555,19 +572,54 @@ AE.serializeProperty = function (prop) {
             var inInterp = null, outInterp = null;
             try { inInterp = prop.keyInInterpolationType(k); } catch (eI) {}
             try { outInterp = prop.keyOutInterpolationType(k); } catch (eO) {}
-            keys.push({
+            var entry = {
                 time: prop.keyTime(k),
                 value: keyVal,
                 inInterp: inInterp,
-                outInterp: outInterp
-            });
+                outInterp: outInterp,
+                inInterpName: AE.safeGet(function () { return AE.KEY_INTERP_NAMES[inInterp]; }, null),
+                outInterpName: AE.safeGet(function () { return AE.KEY_INTERP_NAMES[outInterp]; }, null)
+            };
+            // Temporal ease (speed/influence) — only meaningful on bezier keys,
+            // and only there does the extra bulk pay for itself (easing audits).
+            try {
+                if (inInterp === KeyframeInterpolationType.BEZIER || outInterp === KeyframeInterpolationType.BEZIER) {
+                    entry.inEase = AE._serializeEase(prop.keyInTemporalEase(k));
+                    entry.outEase = AE._serializeEase(prop.keyOutTemporalEase(k));
+                }
+            } catch (eEz) { /* pre-ease host or non-temporal property */ }
+            keys.push(entry);
         }
         out.keyframes = keys;
     }
     return out;
 };
 
-AE.serializePropertyGroup = function (group, depth, maxDepth) {
+/** KeyframeEase[] → [{speed, influence}, ...] (one per eased dimension). */
+AE._serializeEase = function (eases) {
+    if (!eases) return null;
+    var arr = [];
+    for (var i = 0; i < eases.length; i++) {
+        arr.push({ speed: eases[i].speed, influence: eases[i].influence });
+    }
+    return arr;
+};
+
+/** [{speed, influence}, ...] → KeyframeEase[] (inverse of _serializeEase). */
+AE._deserializeEase = function (specs) {
+    var arr = [];
+    for (var i = 0; i < specs.length; i++) {
+        arr.push(new KeyframeEase(specs[i].speed, specs[i].influence));
+    }
+    return arr;
+};
+
+// opts.onlyModified: skip leaf properties still at their default value (no
+// keyframes, no expression, isModified false). Group skeletons are kept so
+// the EXISTENCE of an effect/mask still shows even when all its params are
+// default. When reading isModified throws, the property is kept — hiding
+// data is the worse failure.
+AE.serializePropertyGroup = function (group, depth, maxDepth, opts) {
     if (depth === undefined) depth = 0;
     if (maxDepth === undefined) maxDepth = 6;
     var out = {
@@ -582,52 +634,84 @@ AE.serializePropertyGroup = function (group, depth, maxDepth) {
         try { child = group.property(i); } catch (e) { continue; }
         if (!child) continue;
         if (child.propertyType === PropertyType.PROPERTY) {
+            if (opts && opts.onlyModified && !AE._propertyMatters(child)) continue;
             out.properties.push(AE.serializeProperty(child));
         } else if (child.propertyType === PropertyType.NAMED_GROUP || child.propertyType === PropertyType.INDEXED_GROUP) {
-            out.groups.push(AE.serializePropertyGroup(child, depth + 1, maxDepth));
+            out.groups.push(AE.serializePropertyGroup(child, depth + 1, maxDepth, opts));
         }
     }
     return out;
 };
 
+/** True when a leaf property carries information: modified, keyed, or expressed. */
+AE._propertyMatters = function (prop) {
+    try { if (prop.isModified === true) return true; } catch (eIm) { return true; }
+    try { if (prop.numKeys && prop.numKeys > 0) return true; } catch (eNk) {}
+    try {
+        if (prop.canSetExpression && prop.expressionEnabled && prop.expression && prop.expression.length > 0) return true;
+    } catch (eEx) {}
+    return false;
+};
+
+/** True when a serialized group tree holds no leaf properties at any depth. */
+AE.propertyGroupIsEmpty = function (g) {
+    if (!g) return true;
+    if (g.properties && g.properties.length > 0) return false;
+    if (g.groups) {
+        for (var i = 0; i < g.groups.length; i++) {
+            if (!AE.propertyGroupIsEmpty(g.groups[i])) return false;
+        }
+    }
+    return true;
+};
+
 // ---------- Layer full serialization ----------
 
+// opts.includeProperties=false skips the property tree entirely.
+// opts.detail="summary" keeps the tree but drops leaves still at their default
+// value (AE._propertyMatters) — the answer to 150KB-per-comp audits. Trees
+// that exist on every layer (Transform, Material Options, Audio) collapse to
+// null when nothing in them was touched; Effects/Masks/Text/Contents keep
+// their skeleton so their existence still shows.
 AE.serializeLayerFull = function (layer, opts) {
     opts = opts || {};
     var out = AE.serializeLayerSummary(layer);
     // Parent by index for simple remapping on import.
     out.parent = layer.parent ? { index: layer.parent.index, name: layer.parent.name } : null;
+    var summary = opts.detail === "summary";
+    var walkOpts = summary ? { onlyModified: true } : null;
+    function collapse(g) { return (summary && AE.propertyGroupIsEmpty(g)) ? null : g; }
     // Property tree (Transform + Effects + Masks + Text + Contents + Material Options + Audio)
     if (opts.includeProperties !== false) {
-        try { out.transformGroup = AE.serializePropertyGroup(layer.property("Transform"), 0, 4); } catch (eT) { out.transformGroup = null; }
+        try { out.transformGroup = collapse(AE.serializePropertyGroup(layer.property("Transform"), 0, 4, walkOpts)); } catch (eT) { out.transformGroup = null; }
         try {
             var effects = layer.property("Effects");
-            out.effectsGroup = (effects && effects.numProperties > 0) ? AE.serializePropertyGroup(effects, 0, 6) : null;
+            out.effectsGroup = (effects && effects.numProperties > 0) ? AE.serializePropertyGroup(effects, 0, 6, walkOpts) : null;
         } catch (eE) { out.effectsGroup = null; }
         try {
             var masks = layer.property("Masks");
-            out.masksGroup = (masks && masks.numProperties > 0) ? AE.serializePropertyGroup(masks, 0, 5) : null;
+            out.masksGroup = (masks && masks.numProperties > 0) ? AE.serializePropertyGroup(masks, 0, 5, walkOpts) : null;
         } catch (eM) { out.masksGroup = null; }
         if (layer instanceof TextLayer) {
-            try { out.textGroup = AE.serializePropertyGroup(layer.property("Text"), 0, 4); } catch (eTx) { out.textGroup = null; }
+            try { out.textGroup = AE.serializePropertyGroup(layer.property("Text"), 0, 4, walkOpts); } catch (eTx) { out.textGroup = null; }
         }
         if (layer instanceof ShapeLayer) {
             // Shape layers have a Contents group that holds the shape vector
             // graphics. Walk deeper because shape groups nest several levels.
-            try { out.contentsGroup = AE.serializePropertyGroup(layer.property("Contents"), 0, 10); } catch (eCt) { out.contentsGroup = null; }
+            try { out.contentsGroup = AE.serializePropertyGroup(layer.property("Contents"), 0, 10, walkOpts); } catch (eCt) { out.contentsGroup = null; }
         }
         // Material options (3D layers)
         if (layer instanceof AVLayer && layer.threeDLayer) {
             try {
                 var mat = layer.property("Material Options");
-                out.materialOptionsGroup = mat ? AE.serializePropertyGroup(mat, 0, 3) : null;
+                out.materialOptionsGroup = mat ? collapse(AE.serializePropertyGroup(mat, 0, 3, walkOpts)) : null;
             } catch (eMo) { out.materialOptionsGroup = null; }
         }
         // Audio (if layer has audio)
         if (layer instanceof AVLayer && layer.hasAudio) {
             try {
                 var au = layer.property("Audio");
-                out.audioGroup = au ? AE.serializePropertyGroup(au, 0, 3) : null;
+                out.audioGroup = au ? collapse(AE.serializePropertyGroup(au, 0, 3, walkOpts)) : null;
             } catch (eAu) { out.audioGroup = null; }
         }
         // Time Remap (AVLayer only, must be enabled)
@@ -720,6 +804,107 @@ AE.applyKeys = function (prop, keys) {
         } catch (eS) {}
     }
     return keys.length;
+};
+
+// ---------- Keyframe easing shorthand ----------
+
+// Set temporal ease on one key and flip it to bezier. Handles the dimension
+// bookkeeping that setTemporalEaseAtKey demands: spatial properties
+// (Position/Anchor Point) take exactly ONE KeyframeEase regardless of value
+// dimensions; everything else takes one per dimension. Same contract as the
+// keyframe.set_easing operation — this is its eval.run twin.
+// Speeds default to 0 (ease-style handles). Influence range is 0.1–100.
+AE.setEase = function (prop, keyIndex, inInfluence, outInfluence, inSpeed, outSpeed) {
+    if (inSpeed === undefined) inSpeed = 0;
+    if (outSpeed === undefined) outSpeed = 0;
+    var dims = 1;
+    var spatial = false;
+    try {
+        var pvt = prop.propertyValueType;
+        if (pvt === PropertyValueType.TwoD_SPATIAL || pvt === PropertyValueType.ThreeD_SPATIAL) spatial = true;
+    } catch (ePvt) {}
+    if (!spatial) {
+        try { var v = prop.keyValue(keyIndex); if (v && v.length) dims = v.length; } catch (eV) {}
+    }
+    var inArr = [], outArr = [];
+    for (var d = 0; d < dims; d++) {
+        inArr.push(new KeyframeEase(inSpeed, inInfluence));
+        outArr.push(new KeyframeEase(outSpeed, outInfluence));
+    }
+    prop.setTemporalEaseAtKey(keyIndex, inArr, outArr);
+    prop.setInterpolationTypeAtKey(keyIndex, KeyframeInterpolationType.BEZIER, KeyframeInterpolationType.BEZIER);
+    return keyIndex;
+};
+
+// ---------- Shape construction shorthand ----------
+
+/** Resolve a ShapeLayer, a vector group, or a Contents group to the Contents to add into. */
+AE._vectorContents = function (parent) {
+    if (parent && parent.matchName === "ADBE Vector Group") return parent.property("Contents");
+    if (parent && (parent.matchName === "ADBE Vectors Group" || parent.matchName === "ADBE Root Vectors Group")) return parent;
+    return parent.property("Contents"); // shape layer
+};
+
+/** Append fill/stroke from opts ({fill, fillOpacity, stroke, strokeWidth}) to a Contents group. */
+AE._applyShapeStyle = function (contents, opts) {
+    if (opts.fill) {
+        var fill = contents.addProperty("ADBE Vector Graphic - Fill");
+        fill.property("ADBE Vector Fill Color").setValue(opts.fill);
+        if (opts.fillOpacity !== undefined) fill.property("ADBE Vector Fill Opacity").setValue(opts.fillOpacity);
+    }
+    if (opts.stroke) {
+        var st = contents.addProperty("ADBE Vector Graphic - Stroke");
+        st.property("ADBE Vector Stroke Color").setValue(opts.stroke);
+        if (opts.strokeWidth !== undefined) st.property("ADBE Vector Stroke Width").setValue(opts.strokeWidth);
+    }
+};
+
+// One call = one styled primitive: a new vector group holding the path plus
+// optional fill/stroke. `parent` is a ShapeLayer or a vector group. Returns
+// the created group. opts: { name, roundness (rect only), fill: [r,g,b(,a)],
+// fillOpacity, stroke: [r,g,b(,a)], strokeWidth }. Colors are 0–1.
+AE.rect = function (parent, size, position, opts) {
+    opts = opts || {};
+    var contents = AE._vectorContents(parent);
+    var grp = contents.addProperty("ADBE Vector Group");
+    if (opts.name) grp.name = opts.name;
+    var inner = grp.property("Contents");
+    var shp = inner.addProperty("ADBE Vector Shape - Rect");
+    shp.property("ADBE Vector Rect Size").setValue(size);
+    if (position) shp.property("ADBE Vector Rect Position").setValue(position);
+    if (opts.roundness) shp.property("ADBE Vector Rect Roundness").setValue(opts.roundness);
+    AE._applyShapeStyle(inner, opts);
+    return grp;
+};
+
+AE.ellipse = function (parent, size, position, opts) {
+    opts = opts || {};
+    var contents = AE._vectorContents(parent);
+    var grp = contents.addProperty("ADBE Vector Group");
+    if (opts.name) grp.name = opts.name;
+    var inner = grp.property("Contents");
+    var shp = inner.addProperty("ADBE Vector Shape - Ellipse");
+    shp.property("ADBE Vector Ellipse Size").setValue(size);
+    if (position) shp.property("ADBE Vector Ellipse Position").setValue(position);
+    AE._applyShapeStyle(inner, opts);
+    return grp;
+};
+
+// ---------- Filesystem ----------
+
+// Create the parent directory chain for a file path (string or File) and
+// return the File. AE's own render pipeline does NOT create output folders —
+// rq.render() dies with "Directory does not exist" — so every code path that
+// points an output module at a file goes through this first.
+AE.ensureParentDir = function (pathOrFile) {
+    var f = (pathOrFile instanceof File) ? pathOrFile : new File(pathOrFile);
+    function mk(folder) {
+        if (!folder || folder.exists) return;
+        mk(folder.parent);
+        folder.create();
+    }
+    try { mk(f.parent); } catch (eMk) { /* creation failures surface at write time */ }
+    return f;
 };
 
 // ---------- Composition marker serialization ----------

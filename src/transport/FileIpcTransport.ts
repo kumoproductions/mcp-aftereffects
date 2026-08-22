@@ -39,6 +39,14 @@ interface DispatcherResponse {
   phase?: "dispatch" | "execute";
   result: unknown;
   error: string | null;
+  /**
+   * 1-based line in the compiled function body where execution threw
+   * (ExtendScript Error.line). Absent/null from dispatchers predating the
+   * field. new Function's synthesized header is line 1, so the wrapped
+   * request code starts at line 2 — callers that know the wrapper layout
+   * (ae_do) translate this to a line in the code they assembled.
+   */
+  line?: number | null;
   stack: string | null;
   logs: string[];
 }
@@ -437,6 +445,7 @@ export class FileIpcTransport implements AeTransport {
       result: null,
       error: dispatchFailure ? `dispatcher error: ${parsed.error}` : parsed.error,
       errorCode: dispatchFailure ? "DISPATCHER" : "JSX_THROW",
+      line: typeof parsed.line === "number" ? parsed.line : null,
       stack: parsed.stack,
       logs: parsed.logs ?? [],
       durationMs,

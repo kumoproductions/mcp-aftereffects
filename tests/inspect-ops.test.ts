@@ -83,6 +83,8 @@ describe("multi-target read tools", () => {
     const transport = nullTransport();
     await layerInfoTool.handler({ compNameOrId: "Main", layerIndex: 2 }, transport);
     expect(transport.calls[0].code).not.toContain("_idxs");
-    expect(transport.calls[0].code).toContain("return _layerFull(comp.layer(_idx), _incl);");
+    expect(transport.calls[0].code).toContain(
+      "return _layerFull(comp.layer(_idx), _incl, _detail);",
+    );
   });
 });

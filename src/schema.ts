@@ -79,6 +79,15 @@ export interface KeyframeSpec {
   /** KeyframeInterpolationType enum value (e.g. 6613=LINEAR, 6614=BEZIER). */
   inInterp: number | null;
   outInterp: number | null;
+  /** Readable twins of inInterp/outInterp: "linear" | "bezier" | "hold". Informational. */
+  inInterpName?: string | null;
+  outInterpName?: string | null;
+  /**
+   * Temporal ease per dimension, present when either side is bezier.
+   * Applied on import (before interpolation types, matching AE.applyKeys).
+   */
+  inEase?: Array<{ speed: number; influence: number }> | null;
+  outEase?: Array<{ speed: number; influence: number }> | null;
 }
 
 export interface PropertySpec {

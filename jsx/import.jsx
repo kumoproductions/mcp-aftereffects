@@ -489,9 +489,16 @@ AE.applyPropertyValue = function (prop, pspec) {
                 }
             }
         }
-        // Apply interpolation types (spatial vs temporal handled by setInterpolationTypeAtKey's two-arg form)
+        // Apply temporal ease, then interpolation types. Ease FIRST: setting
+        // ease flips a key to BEZIER, so a HOLD/LINEAR spec must be re-asserted
+        // afterwards (same ordering contract as AE.applyKeys).
         for (var ki = 0; ki < pspec.keyframes.length; ki++) {
             var kfI = pspec.keyframes[ki];
+            if (kfI.inEase && kfI.outEase && kfI.inEase.length > 0 && kfI.outEase.length > 0) {
+                try {
+                    prop.setTemporalEaseAtKey(ki + 1, AE._deserializeEase(kfI.inEase), AE._deserializeEase(kfI.outEase));
+                } catch (eEz) { /* dimension mismatch or non-temporal — keep going */ }
+            }
             if (kfI.inInterp != null && kfI.outInterp != null) {
                 try { prop.setInterpolationTypeAtKey(ki + 1, kfI.inInterp, kfI.outInterp); } catch (eI) {}
             }

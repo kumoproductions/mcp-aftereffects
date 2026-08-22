@@ -29,6 +29,36 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import * as path from "node:path";
 
+import { findFirstCommentStart, findTernaryChains, TERNARY_CHAIN_RULE } from "./lint-jsx.js";
+
+/**
+ * Blank `${…}` interpolations (offset-preserving). Their contents are
+ * TypeScript, where ?: is right-associative and chains are legal — only the
+ * literal ExtendScript around them must obey the no-chain rule. Fragments a
+ * chain-free interpolation splices in are themselves template literals in
+ * some scanned file, so they get their own pass.
+ */
+function blankInterpolations(body: string): string {
+  const chars = body.split("");
+  let i = 0;
+  while (i < body.length) {
+    if (body[i] === "$" && body[i + 1] === "{") {
+      let depth = 1;
+      let j = i + 2;
+      while (j < body.length && depth > 0) {
+        if (body[j] === "{") depth++;
+        else if (body[j] === "}") depth--;
+        j++;
+      }
+      for (let k = i; k < j; k++) if (chars[k] !== "\n") chars[k] = " ";
+      i = j;
+    } else {
+      i++;
+    }
+  }
+  return chars.join("");
+}
+
 /**
  * Callees that turn a value into a safe JSX literal: the `jsx*` helper family
  * (`jsxVal`, the `jsx*Preamble` lookups, `jsxPropertyLookup`). A reference is
@@ -280,6 +310,31 @@ export function lintCodegenFile(filePath: string): CodegenFinding[] {
             "and the original failure is lost. Use AE.errText(...) instead.",
         });
       }
+    }
+
+    // Chained ternaries in generated ExtendScript run LEFT-associatively and
+    // pick the wrong branch (see TERNARY_CHAIN_RULE). Scan with
+    // interpolations, comments, and quoted strings blanked so a `?` in TS
+    // code or an error message cannot conspire with real operators; blanking
+    // is 1:1 so offsets stay valid.
+    const cleaned = blankInterpolations(body)
+      .split("\n")
+      .map((l) => {
+        const ci = findFirstCommentStart(l);
+        const code = ci >= 0 ? l.slice(0, ci) + " ".repeat(l.length - ci) : l;
+        return code
+          .replace(/'(?:[^'\\]|\\.)*'/g, (s) => " ".repeat(s.length))
+          .replace(/"(?:[^"\\]|\\.)*"/g, (s) => " ".repeat(s.length));
+      })
+      .join("\n");
+    for (const offset of findTernaryChains(cleaned)) {
+      const line = lineOf(start + offset);
+      findings.push({
+        file: filePath,
+        line,
+        text: (lines[line - 1] ?? "").trim(),
+        message: TERNARY_CHAIN_RULE.description,
+      });
     }
   }
   return findings;
