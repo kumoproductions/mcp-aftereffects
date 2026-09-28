@@ -221,7 +221,7 @@ describe("macOS", () => {
   });
 
   it("carries why nothing was pressed", async () => {
-    for (const reason of ["no_permission", "no_cancel", "not_found"] as const) {
+    for (const reason of ["no_permission", "not_found"] as const) {
       stubOsascript(async () =>
         JSON.stringify({ posted: false, closed: false, text: null, reason }),
       );
@@ -245,6 +245,15 @@ describe("macOS", () => {
     expect(DARWIN_SCRIPT).not.toMatch(
       /CGEventPost\(|keystroke|System Events|AXDefaultButton|, 36,/,
     );
+  });
+
+  it("judges modality by AXModal and focuses the dialog before Escape", () => {
+    // AE 26.5 dialogs sit at levels 0, 8 and 101 — only AXModal marks them all;
+    // Escape reaches AE's focused window, so the dialog must be focused first.
+    expect(DARWIN_SCRIPT).toContain("'AXModal'");
+    const focus = DARWIN_SCRIPT.indexOf("$('AXFocused'), $.kCFBooleanTrue");
+    expect(focus).toBeGreaterThan(-1);
+    expect(focus).toBeLessThan(DARWIN_SCRIPT.indexOf("CGEventPostToPid"));
   });
 });
 

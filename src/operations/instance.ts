@@ -229,6 +229,9 @@ registerOp({
     }
 
     const plan = buildInstanceLaunchPlan(exe, name);
+    // On macOS the spawned process is `open`, which exits at once; the
+    // After Effects it starts has a pid of its own that we never learn.
+    const aePid = process.platform === "darwin" ? null : undefined;
     const launchedAt = Date.now();
     let spawnError: Error | null = null;
     const child = spawn(plan.command, plan.args, {
@@ -280,7 +283,7 @@ registerOp({
         };
       }
       return fail(
-        `instance '${name}' did not register within ${timeoutMs} ms (After Effects was launched, pid ${child.pid ?? "?"})`,
+        `instance '${name}' did not register within ${timeoutMs} ms (After Effects was launched${aePid === null ? "" : `, pid ${child.pid ?? "?"}`})`,
         {
           errorCode: "NO_INSTANCE",
           hint:
@@ -320,7 +323,7 @@ registerOp({
     return {
       ok: true,
       instance: name,
-      pid: child.pid ?? null,
+      pid: aePid === null ? null : (child.pid ?? null),
       startupMs: Date.now() - launchedAt,
       project: opened,
       // Forward slashes, like every other path this server reports.
@@ -470,9 +473,9 @@ registerOp({
     "(missing files or fonts, a script alert) is acknowledged; a question is cancelled, never answered: " +
     '"Save changes before closing?" leaves the project open and unsaved. Take `id` from instance.dialogs ' +
     "or from a DIALOG_OPEN error's details.dialogs. When the user wants a dialog answered some other way " +
-    "(Save, Replace…), ask them to click it. Windows and macOS; on macOS it needs Accessibility permission, " +
-    "presses the dialog's Cancel button (or its only button, on an OK-only warning), and refuses a dialog " +
-    "that offers choices but no Cancel.",
+    "(Save, Replace…), ask them to click it. Windows and macOS; on macOS it needs Accessibility permission. " +
+    "A dialog Escape does not close is left open unless it has a single button (an OK-only warning), " +
+    "which is pressed.",
   params: [
     {
       name: "id",
@@ -492,13 +495,6 @@ registerOp({
       return fail(`cannot close After Effects dialog ${id}: no Accessibility permission`, {
         hint: ACCESSIBILITY_HINT,
       });
-    }
-    if (r.reason === "no_cancel") {
-      return fail(
-        `After Effects dialog ${id} has no Cancel to press, only choices — it was left open` +
-          (r.text ? `: "${r.text.replace(/\s*\n\s*/g, " ")}"` : ""),
-        { hint: "Ask the user to answer it in After Effects." },
-      );
     }
     if (!r.posted) {
       return fail(

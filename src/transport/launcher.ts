@@ -64,8 +64,9 @@ function appBundlePath(aePath: string): string {
  * reaching a running one. Windows: `AfterFX.exe -m` — the spawned process IS
  * the instance, so the AE_MCP_INSTANCE the caller puts in its environment is
  * what jsx/agent.jsx reads. macOS: `open -n` starts a second copy of the
- * bundle; `--env` (macOS 12+) carries the variable into it. The macOS plan is
- * not yet verified on hardware.
+ * bundle; `--env` (macOS 12+) carries the variable into it. Verified on AE
+ * 26.5 / macOS 26.4: the second instance starts and its agent registers under
+ * that name. `open` exits at once, so the spawned pid is not After Effects'.
  */
 export function buildInstanceLaunchPlan(
   aePath: string,

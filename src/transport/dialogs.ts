@@ -26,24 +26,34 @@
 // so it runs only where a failure has to be explained or a caller asked —
 // never on the happy path.
 //
-// macOS runs a JXA script through osascript (~0.15 s) in two tiers:
-//   - Without any permission, CGWindowListCopyWindowInfo lists every
-//     on-screen window with its owner pid and level. A window at the modal
-//     panel level (8, NSModalPanelWindowLevel) owned by an After Effects
-//     process is reported as a dialog, with empty text. It cannot be closed.
-//   - With Accessibility permission for the app that runs this server, the
-//     dialog's AX element (matched to the CG window by its frame) yields its
-//     text, and dismissing presses its AXCancelButton — the button Escape
-//     would press. A dialog with no cancel button but exactly one button (an
-//     OK-only warning) gets that button pressed; one exposing no buttons at all
-//     gets Escape posted to its process (CGEventPostToPid, which reaches the
-//     app without activating it). Neither path moves focus.
+// macOS runs a JXA script through osascript (~0.13 s). What was verified on
+// AE 26.5 (macOS 26.4):
+//   - While a modal dialog is up, DoScript blocks until its AppleEvent
+//     timeout (-1712) — no error, and no extra alert stacks up. A script that
+//     timed out this way did NOT run once the dialog closed. The agent stops
+//     ticking and resumes on its own when the dialog goes.
+//   - AE's dialogs are not at one window level: the missing-files warning,
+//     script alert() and "Save changes…?" sit at 8, the System Compatibility
+//     Report at 101, the Adobe Licensing prompt at 0. Every one of them is
+//     AXModal in the accessibility tree, with its text readable.
+//   - AE exposes no AXCancelButton, and Escape goes to AE's FOCUSED window —
+//     often the main window, not the dialog. Focusing the dialog through AX
+//     (AXRaise + AXFocused, which does not activate AE) and then posting
+//     Escape to AE's pid (CGEventPostToPid) closes it: the save prompt is
+//     cancelled (project left open and dirty), the warning and alert() are
+//     acknowledged. The frontmost app stays frontmost.
+// So there are two tiers:
+//   - Without permission, CGWindowListCopyWindowInfo gives owner pid and
+//     level only: AE windows at levels 8 and 101 are reported, with empty
+//     text; a level-0 dialog (Licensing) is missed. Nothing can be closed —
+//     Escape posted without Accessibility is dropped.
+//   - With Accessibility permission for the app running this server, every
+//     AXModal AE window is reported with its text, and dismissing presses
+//     AXCancelButton if there is one, else focuses the dialog and posts
+//     Escape; if that leaves it open and it has exactly one titled button
+//     (an OK-only warning), that button is pressed. Otherwise it stays open.
 // System Events is deliberately not used: the first Apple event to it raises
 // an Automation consent prompt — itself a modal — and blocks until answered.
-// Verified on macOS 26.4 against a stand-in NSAlert in another process (layer
-// 8; Escape posted without Accessibility is dropped). NOT yet verified against
-// After Effects itself: its bundle id, whether its alerts sit at layer 8, and
-// whether AX sees their text and buttons are all assumptions.
 
 import { execFile } from "node:child_process";
 
@@ -78,10 +88,10 @@ export interface DismissResult {
   /** What the dialog said (null when it was not found). */
   text: string | null;
   /**
-   * Why nothing was sent, when posted is false: no such dialog, no
-   * Accessibility permission (macOS), or no cancel action to take (macOS).
+   * Why nothing was sent, when posted is false: no such dialog, or no
+   * Accessibility permission (macOS).
    */
-  reason?: "not_found" | "no_permission" | "no_cancel";
+  reason?: "not_found" | "no_permission";
 }
 
 /** Runs a script and resolves with its stdout. Injectable for tests. */
@@ -172,7 +182,6 @@ ConvertTo-Json -Compress -InputObject @{ posted = $true; closed = $closed; text 
 export const DARWIN_SCRIPT = String.raw`
 ObjC.import('Cocoa'); ObjC.import('CoreGraphics'); ObjC.import('ApplicationServices');
 function envVar(k) { var v = $.NSProcessInfo.processInfo.environment.objectForKey(k); return v.isNil() ? '' : ObjC.unwrap(v); }
-var MODAL_LAYER = 8;
 var trusted = !!$.AXIsProcessTrusted();
 function isAe(bundle) { return /^com\.adobe\.aftereffects/i.test(bundle); }
 function aeProcesses() {
@@ -224,65 +233,81 @@ function axButtons(el, out, depth) {
   }
   return out;
 }
+function axBool(el, attr) { var v = ax(el, attr); return v ? ObjC.unwrap(ObjC.castRefToObject(v)) == true : false; }
 function axApp(pid, cache) {
   if (cache[pid]) return cache[pid];
-  var app = $.AXUIElementCreateApplication(pid), wins = [];
-  axList(app, 'AXWindows').forEach(function (w) { wins.push({ el: w, pos: axNums(w, 'AXPosition'), size: axNums(w, 'AXSize') }); });
-  var main = axElement(app, 'AXMainWindow');
-  return (cache[pid] = { wins: wins, title: main ? axString(main, 'AXTitle') : '' });
+  var app = $.AXUIElementCreateApplication(pid), wins = [], title = '';
+  axList(app, 'AXWindows').forEach(function (w) {
+    var aw = { el: w, pos: axNums(w, 'AXPosition'), size: axNums(w, 'AXSize'), modal: axBool(w, 'AXModal'), title: axString(w, 'AXTitle') };
+    // AE reports no AXMainWindow; its main window is the titled, non-modal one.
+    if (!title && !aw.modal && aw.title) title = aw.title;
+    wins.push(aw);
+  });
+  return (cache[pid] = { wins: wins, title: title });
 }
 function near(a, b) { return Math.abs(a - b) < 2; }
+// Seen on AE 26.5: the missing-files warning sits at layer 8, the System
+// Compatibility Report at 101, the Adobe Licensing prompt at 0 — so with AX
+// the test is AXModal, and without it only layers 8 and 101 are guessed at.
+var GUESSED_LAYERS = { 8: true, 101: true };
 function scan() {
   var procs = aeProcesses(), wins = cgWindows(), cache = {}, found = [];
   var titles = {};
   wins.forEach(function (w) { if (w.kCGWindowLayer === 0 && w.kCGWindowName && !titles[w.kCGWindowOwnerPID]) titles[w.kCGWindowOwnerPID] = w.kCGWindowName; });
   wins.forEach(function (w) {
     var pid = w.kCGWindowOwnerPID, b = w.kCGWindowBounds;
-    if (!procs[pid] || w.kCGWindowLayer !== MODAL_LAYER || !(w.kCGWindowAlpha > 0)) return;
+    if (!procs[pid] || !(w.kCGWindowAlpha > 0)) return;
     var d = { pid: pid, id: pid + ':' + w.kCGWindowNumber, text: '', width: Math.round(b.Width), height: Math.round(b.Height),
       window: titles[pid] || null, accessibility: trusted, startedAt: procs[pid].startedAt, number: w.kCGWindowNumber, el: null };
+    var modal = !!GUESSED_LAYERS[w.kCGWindowLayer];
     if (trusted) {
       var app = axApp(pid, cache);
       if (app.title) d.window = app.title;
       app.wins.forEach(function (aw) {
-        if (!d.el && aw.pos && aw.size && near(aw.pos[0], b.X) && near(aw.pos[1], b.Y) && near(aw.size[0], b.Width) && near(aw.size[1], b.Height)) d.el = aw.el;
+        if (!d.el && aw.pos && aw.size && near(aw.pos[0], b.X) && near(aw.pos[1], b.Y) && near(aw.size[0], b.Width) && near(aw.size[1], b.Height)) { d.el = aw.el; modal = aw.modal; }
       });
-      if (d.el) d.text = axTexts(d.el, [], 0, { n: 400 }).join('\n');
+      if (modal && d.el) d.text = axTexts(d.el, [], 0, { n: 400 }).filter(function (t) { return !/^(Adobe )?After Effects$/.test(t); }).join('\n');
     }
-    found.push(d);
+    if (modal) found.push(d);
   });
   return found;
 }
 function strip(d) { return { pid: d.pid, id: d.id, text: d.text, width: d.width, height: d.height, window: d.window, accessibility: d.accessibility, startedAt: d.startedAt }; }
+function gone(number) {
+  for (var i = 0; i < 10; i++) {
+    delay(0.1);
+    if (!cgWindows().some(function (w) { return w.kCGWindowNumber === number; })) return true;
+  }
+  return false;
+}
 function dismiss(target) {
   var none = { posted: false, closed: false, text: null };
-  var all = scan(), d = null;
-  all.forEach(function (x) { if (x.id === target) d = x; });
+  var d = null;
+  scan().forEach(function (x) { if (x.id === target) d = x; });
   if (!d) { none.reason = 'not_found'; return none; }
   if (!trusted) { none.reason = 'no_permission'; return none; }
-  var how = null;
+  var cancel = d.el ? axElement(d.el, 'AXCancelButton') : null;
+  if (cancel) {
+    $.AXUIElementPerformAction(cancel, $('AXPress'));
+    return { posted: true, closed: gone(d.number), text: d.text || null, method: 'cancel_button' };
+  }
+  // AE exposes no AXCancelButton. Escape goes to the app's focused window,
+  // which is often the main window rather than the dialog, so focus the
+  // dialog inside AE first (this does not activate AE).
   if (d.el) {
-    var cancel = axElement(d.el, 'AXCancelButton');
-    var buttons = axButtons(d.el, [], 0);
-    if (cancel) { $.AXUIElementPerformAction(cancel, $('AXPress')); how = 'cancel_button'; }
-    else if (buttons.length === 1) { $.AXUIElementPerformAction(buttons[0], $('AXPress')); how = 'only_button'; }
-    else if (buttons.length > 1) { none.reason = 'no_cancel'; none.text = d.text || null; return none; }
+    $.AXUIElementPerformAction(d.el, $('AXRaise'));
+    $.AXUIElementSetAttributeValue(d.el, $('AXFocused'), $.kCFBooleanTrue);
   }
-  if (!how) {
-    // No buttons in AX (a custom-drawn dialog, or its element not found):
-    // Escape to the process reaches its key window, so only when this is
-    // the process's only dialog.
-    var siblings = all.filter(function (x) { return x.pid === d.pid; }).length;
-    if (siblings !== 1) { none.reason = 'no_cancel'; none.text = d.text || null; return none; }
-    [true, false].forEach(function (down) { $.CGEventPostToPid(d.pid, $.CGEventCreateKeyboardEvent($(), 53, down)); });
-    how = 'escape';
+  [true, false].forEach(function (down) { $.CGEventPostToPid(d.pid, $.CGEventCreateKeyboardEvent($(), 53, down)); });
+  if (gone(d.number)) return { posted: true, closed: true, text: d.text || null, method: 'escape' };
+  // Escape did nothing: an OK-only warning has no choice to make, so its one
+  // button is pressed; anything offering choices is left for the user.
+  var buttons = d.el ? axButtons(d.el, [], 0).filter(function (b) { return axString(b, 'AXTitle'); }) : [];
+  if (buttons.length === 1) {
+    $.AXUIElementPerformAction(buttons[0], $('AXPress'));
+    return { posted: true, closed: gone(d.number), text: d.text || null, method: 'only_button' };
   }
-  var closed = false;
-  for (var i = 0; i < 20 && !closed; i++) {
-    delay(0.1);
-    closed = !cgWindows().some(function (w) { return w.kCGWindowNumber === d.number; });
-  }
-  return { posted: true, closed: closed, text: d.text || null, method: how };
+  return { posted: true, closed: false, text: d.text || null, method: 'escape' };
 }
 var mode = envVar('AE_MCP_DIALOG_MODE');
 if (mode === 'dismiss') {
@@ -415,7 +440,7 @@ export async function scanAeDialogs(
   }
 }
 
-const DISMISS_REASONS = new Set(["not_found", "no_permission", "no_cancel"]);
+const DISMISS_REASONS = new Set(["not_found", "no_permission"]);
 
 /**
  * Close a dialog by its cancel action, never a decision (see the header: a

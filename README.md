@@ -245,10 +245,10 @@ While After Effects shows a modal dialog, no script runs at all — neither the 
 
 Dialog detection works on Windows and macOS. On macOS it has two tiers:
 
-- Without any permission, a dialog is detected — the call still fails with `DIALOG_OPEN` rather than a bare timeout — but its text is not readable (`accessibility: false`, text empty) and it cannot be dismissed from here.
-- With Accessibility permission for the app that runs the MCP server (System Settings > Privacy & Security > Accessibility — your terminal, or the MCP client app), the text is read and `instance.dismiss_dialog` works: it presses the dialog's Cancel button, or its only button on an OK-only warning. A dialog that offers choices but no Cancel (Save / Don't Save) is left open for you to answer. Nothing takes keyboard focus.
+- With Accessibility permission for the app that runs the MCP server (System Settings > Privacy & Security > Accessibility — your terminal, or the MCP client app), every dialog is found and its text read, and `instance.dismiss_dialog` works the same way as on Windows: Escape, the cancel action. A "Save changes before closing?" prompt is cancelled (the project stays open and unsaved); a warning or script `alert()` is acknowledged. After Effects is not brought to the front.
+- Without that permission, dialogs are only guessed at from the window list: most are found, with empty text (`accessibility: false`), but some — such as the Adobe licensing prompt — are missed, and none can be dismissed from here.
 
-The macOS side has been checked against a stand-in system alert, not yet against After Effects' own dialogs.
+Verified on After Effects 26.5 / macOS 26.4 with the missing-files warning, a script `alert()`, the save prompt and the System Compatibility Report.
 
 ### After Effects Stops at a "We detected a crash" Dialog
 
