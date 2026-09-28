@@ -6,6 +6,7 @@
 // this interface.
 
 import type { AeErrorCode } from "../errors.js";
+import type { AeDialog } from "./dialogs.js";
 import type { TargetResolution } from "./instances.js";
 
 export interface EvalRequest {
@@ -75,6 +76,11 @@ export interface EvalResult {
   logs: string[];
   /** Wall-clock duration in milliseconds for the transport round trip. */
   durationMs: number;
+  /**
+   * Modal dialogs After Effects was found showing when the call failed
+   * (DIALOG_OPEN). Handles can be passed to `instance.dismiss_dialog`.
+   */
+  dialogs?: AeDialog[];
 }
 
 export interface AeTransport {

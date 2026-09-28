@@ -12,7 +12,7 @@
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   BUSY_LOCK_PATH,
@@ -25,6 +25,15 @@ import {
   responsePathFor,
 } from "../src/config.js";
 import { FileIpcTransport } from "../src/transport/FileIpcTransport.js";
+import { setPowerShellRunner } from "../src/transport/dialogs.js";
+
+// The transport scans for After Effects dialogs on its failure paths. Never
+// let that reach the real desktop from a unit test.
+let restoreRunner: () => void;
+beforeAll(() => {
+  restoreRunner = setPowerShellRunner(async () => "[]");
+});
+afterAll(() => restoreRunner());
 
 /**
  * An executable that exists and starts, but will never write a response.

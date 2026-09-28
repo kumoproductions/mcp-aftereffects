@@ -30,10 +30,12 @@ import {
 } from "../config.js";
 import type { AeErrorCode } from "../errors.js";
 import type { AeTransport, EvalRequest, EvalResult } from "./AeTransport.js";
+import { type AeDialog, DIALOG_HINT, dialogBlockMessage, scanAeDialogs } from "./dialogs.js";
 import {
   type InstanceInfo,
   type TargetResolution,
   describeInstance,
+  listInstances,
   readInstance,
   resolveTarget,
   sweepDeadInstanceDirs,
@@ -77,6 +79,8 @@ export interface FileIpcTransportOptions {
   instance?: string | null;
   /** Process launcher; defaults to child_process.spawn. */
   spawn?: SpawnFn;
+  /** Modal-dialog scan; defaults to scanAeDialogs (Windows only). Injectable for tests. */
+  scanDialogs?: () => Promise<AeDialog[]>;
 }
 
 interface SpawnState {
@@ -153,10 +157,12 @@ export class FileIpcTransport implements AeTransport {
   private readonly setupError: string | null = null;
   private readonly instanceOption: string | null | undefined;
   private readonly spawnFn: SpawnFn;
+  private readonly scanDialogs: () => Promise<AeDialog[]>;
 
   constructor(options: FileIpcTransportOptions = {}) {
     this.instanceOption = options.instance;
     this.spawnFn = options.spawn ?? ((command, args, opts) => nodeSpawn(command, args, opts));
+    this.scanDialogs = options.scanDialogs ?? (() => scanAeDialogs());
     try {
       // 0o700: write access to the mailbox is code execution inside AE (see
       // RUNTIME_DIR_MODE). recursive:true applies the mode to what it creates;
@@ -248,6 +254,10 @@ export class FileIpcTransport implements AeTransport {
 
     const target = await this.resolveTarget(req.instance);
     if (target.mode === "error") {
+      // A named instance that stopped ticking is most often one stuck behind
+      // a dialog — say which, rather than only that it went quiet.
+      const dialogs = await this.scanDialogs();
+      if (dialogs.length > 0) return dialogFailure(dialogs, target.message, started);
       return failure("NO_INSTANCE", target.message, {
         durationMs: Date.now() - started,
         hint: target.hint,
@@ -311,6 +321,14 @@ export class FileIpcTransport implements AeTransport {
           const current = await readInstance(dir, now);
           if (!current.alive) {
             await this.safeUnlink(requestPath);
+            const dialogs = await this.scanDialogs();
+            if (dialogs.length > 0) {
+              return dialogFailure(
+                dialogs,
+                `After Effects instance '${instance.id}' stopped responding; the request was never picked up and has been discarded`,
+                started,
+              );
+            }
             return failure(
               "NO_INSTANCE",
               `After Effects instance '${instance.id}' stopped responding (${describeInstance(current)}); ` +
@@ -329,19 +347,19 @@ export class FileIpcTransport implements AeTransport {
     }
 
     const reclaimed = await this.safeUnlink(requestPath);
-    return failure(
-      "TIMEOUT",
+    const pullTimeoutMessage =
       `timeout after ${timeoutMs}ms waiting for After Effects instance '${instance.id}' to respond` +
-        (reclaimed
-          ? " (the request was never picked up and has been discarded)"
-          : " (the request WAS picked up by the instance; the operation may still be running)"),
-      {
-        durationMs: Date.now() - started,
-        hint:
-          "Is After Effects showing a modal dialog, or rendering/previewing? Scripts wait for both. " +
-          "For a long operation, raise timeoutMs.",
-      },
-    );
+      (reclaimed
+        ? " (the request was never picked up and has been discarded)"
+        : " (the request WAS picked up by the instance; the operation may still be running)");
+    const pullDialogs = await this.scanDialogs();
+    if (pullDialogs.length > 0) return dialogFailure(pullDialogs, pullTimeoutMessage, started);
+    return failure("TIMEOUT", pullTimeoutMessage, {
+      durationMs: Date.now() - started,
+      hint:
+        "Is After Effects showing a modal dialog, or rendering/previewing? Scripts wait for both. " +
+        "For a long operation, raise timeoutMs.",
+    });
   }
 
   // --- Push: launch the dispatcher into the registered instance ---------------
@@ -357,6 +375,17 @@ export class FileIpcTransport implements AeTransport {
       return failure("AE_NOT_FOUND", err instanceof Error ? err.message : String(err), {
         durationMs: Date.now() - started,
       });
+    }
+
+    // 0. A resident agent that registered and then stopped ticking is the
+    // signature of an After Effects stuck behind a dialog — and every `-r`
+    // launched at it would only stack a "Cannot run a script while a modal
+    // dialog is waiting for response" alert on top. Look before launching.
+    if ((await listInstances()).some((i) => !i.alive)) {
+      const dialogs = await this.scanDialogs();
+      if (dialogs.length > 0) {
+        return dialogFailure(dialogs, "nothing was sent to After Effects", started);
+      }
     }
 
     const id = request.id;
@@ -443,8 +472,21 @@ export class FileIpcTransport implements AeTransport {
             attempts < MAX_LAUNCH_ATTEMPTS &&
             now - lastLaunchAt >= RELAUNCH_UNCONSUMED_AFTER_MS * attempts
           ) {
+            // Unconsumed with the forwarder gone: either AE refused the
+            // script (the "second script" case — relaunching fixes it) or a
+            // dialog blocks scripting, where each relaunch only adds another
+            // alert. Tell the two apart before launching again.
+            const dialogs = await this.scanDialogs();
+            if (dialogs.length > 0) {
+              await this.safeUnlink(requestPath);
+              return dialogFailure(
+                dialogs,
+                `the request was never picked up after ${attempts} launch attempt${attempts === 1 ? "" : "s"} and has been discarded`,
+                started,
+              );
+            }
             attempts++;
-            lastLaunchAt = now;
+            lastLaunchAt = Date.now();
             this.launchDispatcher(spawnState);
           }
         }
@@ -457,6 +499,16 @@ export class FileIpcTransport implements AeTransport {
       // dispatcher already consumed it this unlink is a no-op.
       const reclaimed = await this.safeUnlink(requestPath);
       leaveLockForRunningScript = !reclaimed;
+      const pushDialogs = await this.scanDialogs();
+      if (pushDialogs.length > 0) {
+        return dialogFailure(
+          pushDialogs,
+          reclaimed
+            ? `timeout after ${timeoutMs}ms; the request was never picked up and has been discarded`
+            : `timeout after ${timeoutMs}ms; the request WAS picked up by AE and may be waiting on the dialog`,
+          started,
+        );
+      }
       return failure(
         "TIMEOUT",
         `timeout after ${timeoutMs}ms waiting for After Effects to respond` +
@@ -767,7 +819,7 @@ export class FileIpcTransport implements AeTransport {
 function failure(
   errorCode: AeErrorCode,
   message: string,
-  extra: { stack?: string | null; durationMs?: number; hint?: string } = {},
+  extra: { stack?: string | null; durationMs?: number; hint?: string; dialogs?: AeDialog[] } = {},
 ): EvalResult {
   return {
     ok: false,
@@ -777,7 +829,17 @@ function failure(
     stack: extra.stack ?? null,
     logs: [],
     durationMs: extra.durationMs ?? 0,
+    ...(extra.dialogs ? { dialogs: extra.dialogs } : {}),
   };
+}
+
+/** DIALOG_OPEN: what the dialogs say first, then what became of the call. */
+function dialogFailure(dialogs: AeDialog[], outcome: string, started: number): EvalResult {
+  return failure("DIALOG_OPEN", `${dialogBlockMessage(dialogs)} — ${outcome}`, {
+    durationMs: Date.now() - started,
+    hint: DIALOG_HINT,
+    dialogs,
+  });
 }
 
 function sleep(ms: number): Promise<void> {

@@ -234,6 +234,17 @@ Please check the following:
 
 The call had no After Effects to go to. Either every running After Effects was started with `-m` and the agent is not installed (see [Multiple After Effects Instances](#multiple-after-effects-instances)), the instance named by `AE_MCP_INSTANCE` / `instance` is not running or is stuck in a dialog, or several agents are live and none was named. The error lists what is live.
 
+### `DIALOG_OPEN` — After Effects Is Showing a Dialog
+
+While After Effects shows a modal dialog, no script runs at all — neither the resident agent nor a `-r` launch. The most common cause is opening a project whose footage or fonts are missing ("N files are missing since you last saved this project"), and the dialog is often hidden behind the main window. On Windows the error quotes the dialog's text.
+
+- `instance.dialogs` lists the dialogs every running After Effects is showing.
+- `instance.dismiss_dialog { id }` closes it with Escape, the dialog's cancel action: a warning is acknowledged, and a question such as "Save changes before closing?" is cancelled rather than answered — nothing is saved or discarded. A dialog you want answered differently has to be clicked by you.
+- The agent resumes on its own once the dialog is gone; no restart is needed.
+- To avoid the missing-files warning in the first place, start After Effects without a project and open it with `project.open`, which suppresses the dialog.
+
+Dialog detection is Windows-only for now.
+
 ### After Effects Stops at a "We detected a crash" Dialog
 
 If an After Effects process was killed (Task Manager, `taskkill`, a crash), the next launch shows the Safe Mode dialog and waits for a click — including instances started by `instance.start`, which then fail with `did not register`. Dismiss the dialog on screen. An instance that quits normally does not trigger it, so prefer `instance.stop` over killing.

@@ -28,6 +28,12 @@ import {
 import { jsxFail, jsxVal, registerOp } from "../registry.js";
 import type { AeTransport } from "../transport/AeTransport.js";
 import {
+  DIALOG_HINT,
+  dialogBlockMessage,
+  dismissAeDialog,
+  scanAeDialogs,
+} from "../transport/dialogs.js";
+import {
   type InstanceInfo,
   describeInstance,
   instanceLabel,
@@ -257,6 +263,16 @@ registerOp({
       await sleep(500);
     }
     if (registered === null) {
+      const dialogs = (await scanAeDialogs()).filter((d) => d.pid === child.pid);
+      if (dialogs.length > 0) {
+        return {
+          ...fail(
+            `instance '${name}' did not register within ${timeoutMs} ms: ${dialogBlockMessage(dialogs)}`,
+            { errorCode: "DIALOG_OPEN", hint: DIALOG_HINT },
+          ),
+          dialogs,
+        };
+      }
       return fail(
         `instance '${name}' did not register within ${timeoutMs} ms (After Effects was launched, pid ${child.pid ?? "?"})`,
         {
@@ -415,6 +431,72 @@ registerOp({
     }
     await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
     return { ok: true, instance: name, stopped: true, saved: !!args.save, file };
+  },
+});
+
+registerOp({
+  name: "instance.dialogs",
+  category: "instance",
+  description:
+    "List the modal dialogs every running After Effects is showing — the message text, the owning process " +
+    "and its window title, and an id for instance.dismiss_dialog. While a dialog is open no script runs " +
+    "(calls fail with DIALOG_OPEN, or an instance stops ticking), and the dialog is often hidden behind the " +
+    "main window. Windows only; elsewhere the list is always empty.",
+  params: [],
+  readOnly: true,
+  toJsx: () => nodeOnly("instance.dialogs"),
+  async run() {
+    const dialogs = await scanAeDialogs();
+    return {
+      ok: true,
+      dialogs,
+      supported: process.platform === "win32",
+    };
+  },
+});
+
+registerOp({
+  name: "instance.dismiss_dialog",
+  category: "instance",
+  description:
+    "Close a modal dialog After Effects is showing by pressing Escape — its cancel action. A warning " +
+    "(missing files or fonts, a script alert) is acknowledged; a question is cancelled, never answered: " +
+    '"Save changes before closing?" leaves the project open and unsaved. Take `id` from instance.dialogs ' +
+    "or from a DIALOG_OPEN error's details.dialogs. When the user wants a dialog answered some other way " +
+    "(Save, Replace…), ask them to click it. Windows only.",
+  params: [
+    {
+      name: "id",
+      type: "string",
+      description: "The dialog's id, as listed by instance.dialogs",
+      required: true,
+    },
+  ],
+  toJsx: () => nodeOnly("instance.dismiss_dialog"),
+  async run(args) {
+    if (process.platform !== "win32") {
+      return fail("instance.dismiss_dialog is only available on Windows");
+    }
+    const id = typeof args.id === "string" ? args.id.trim() : "";
+    const r = await dismissAeDialog(id);
+    if (!r.posted) {
+      return fail(
+        `no After Effects dialog with id ${JSON.stringify(id)} is open — it may already be closed`,
+        { hint: "Call instance.dialogs for the current list." },
+      );
+    }
+    const remaining = await scanAeDialogs();
+    return {
+      ok: true,
+      dismissed: { id, text: r.text },
+      closed: r.closed,
+      remaining,
+      ...(r.closed
+        ? {}
+        : {
+            hint: "The dialog did not close on Escape — ask the user to answer it in After Effects.",
+          }),
+    };
   },
 });
 

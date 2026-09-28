@@ -13,7 +13,7 @@ import { EventEmitter } from "node:events";
 import { promises as fs } from "node:fs";
 import { randomUUID } from "node:crypto";
 import * as path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import {
   BUSY_LOCK_PATH,
@@ -29,6 +29,25 @@ import {
   type LaunchedProcess,
   type SpawnFn,
 } from "../src/transport/FileIpcTransport.js";
+import { type AeDialog, setPowerShellRunner } from "../src/transport/dialogs.js";
+
+// The transport scans for After Effects dialogs on its failure paths. Never
+// let that reach the real desktop from a unit test.
+let restoreRunner: () => void;
+beforeAll(() => {
+  restoreRunner = setPowerShellRunner(async () => "[]");
+});
+afterAll(() => restoreRunner());
+
+const DIALOG: AeDialog = {
+  pid: 4242,
+  id: "123456",
+  text: "After Effects warning: 1 file is missing since you last saved this project.",
+  width: 492,
+  height: 260,
+  window: "Adobe After Effects 2026 - C:/work/ShotA.aep",
+};
+const seesDialog = async () => [DIALOG];
 
 const INERT_EXE = process.platform === "win32" ? "C:/Windows/System32/cmd.exe" : "/bin/true";
 const savedExe = process.env.AE_MCP_EXE;
@@ -248,6 +267,47 @@ describe("pull path", () => {
     expect(await listMail(agent.dir, REQUEST_PREFIX)).toEqual([]);
   });
 
+  it("names the dialog when the instance stopped ticking behind one", async () => {
+    agent = new FakeAgent(null);
+    await agent.start();
+    const transport = new FileIpcTransport({
+      instance: agent.id,
+      spawn: recordingSpawn(() => {}).spawn,
+      scanDialogs: seesDialog,
+    });
+    const call = transport.execute({ code: "return 1;", label: "pull_modal", timeoutMs: 30_000 });
+    await sleep(200);
+    agent.pause();
+    await agent.heartbeat({ ts: Date.now() - HEARTBEAT_STALE_MS - 1000 });
+
+    const res = await call;
+    expect(res.errorCode).toBe("DIALOG_OPEN");
+    expect(res.error).toContain("1 file is missing");
+    expect(res.error).toContain("instance.dismiss_dialog");
+    expect(res.dialogs).toEqual([DIALOG]);
+    expect(await listMail(agent.dir, REQUEST_PREFIX)).toEqual([]);
+  });
+
+  it("reports DIALOG_OPEN for a stale named instance before sending anything", async () => {
+    agent = new FakeAgent(null);
+    await agent.start();
+    agent.pause();
+    await agent.heartbeat({ ts: Date.now() - HEARTBEAT_STALE_MS - 1000 });
+    const transport = new FileIpcTransport({
+      instance: agent.id,
+      spawn: recordingSpawn(() => {}).spawn,
+      scanDialogs: seesDialog,
+    });
+    const res = await transport.execute({
+      code: "return 1;",
+      label: "pull_stale",
+      timeoutMs: 5_000,
+    });
+    expect(res.errorCode).toBe("DIALOG_OPEN");
+    expect(res.error).toContain(agent.id);
+    expect(await listMail(agent.dir, REQUEST_PREFIX)).toEqual([]);
+  });
+
   it("times out naming the instance and reclaims an unconsumed request", async () => {
     agent = new FakeAgent(null);
     await agent.start();
@@ -382,4 +442,56 @@ describe("push path: phantom launch guard", () => {
     expect(launcher.calls).toBe(2);
     expect(launcher.children.every((c) => !c.killed)).toBe(true);
   }, 10_000);
+
+  it("stops relaunching once a dialog is what blocks the script", async () => {
+    // Each -r into an AE that shows a modal adds a "Cannot run a script
+    // while a modal dialog is waiting for response" alert on top of it.
+    const launcher = recordingSpawn((child) => {
+      setTimeout(() => child.emit("exit", 0), 30);
+    });
+    const transport = new FileIpcTransport({
+      instance: null,
+      spawn: launcher.spawn,
+      // Visible only once the first launch is out, whatever else the real
+      // mailbox holds: this is about the relaunch, not the pre-launch check.
+      scanDialogs: async () => (launcher.calls > 0 ? [DIALOG] : []),
+    });
+    const res = await transport.execute({
+      code: "return 1;",
+      label: "modal_push",
+      timeoutMs: 20_000,
+    });
+    expect(res.errorCode).toBe("DIALOG_OPEN");
+    expect(res.error).toContain("after 1 launch attempt");
+    expect(res.dialogs).toEqual([DIALOG]);
+    expect(launcher.calls).toBe(1);
+    await expect(fs.access(BUSY_LOCK_PATH)).rejects.toThrow();
+  }, 15_000);
+
+  it("does not launch at all when a stale agent sits behind a dialog", async () => {
+    // The 2026-09-15 report: the agent stopped ticking behind a modal, the
+    // server fell back to push, and three -r launches stacked three alerts.
+    const stale = new FakeAgent(null);
+    await stale.start();
+    stale.pause();
+    await stale.heartbeat({ ts: Date.now() - HEARTBEAT_STALE_MS - 1000 });
+    try {
+      const launcher = recordingSpawn(() => {});
+      const transport = new FileIpcTransport({
+        instance: null,
+        spawn: launcher.spawn,
+        scanDialogs: seesDialog,
+      });
+      const res = await transport.execute({
+        code: "return 1;",
+        label: "stale_push",
+        timeoutMs: 20_000,
+      });
+      expect(res.errorCode).toBe("DIALOG_OPEN");
+      expect(res.error).toContain("nothing was sent");
+      expect(launcher.calls).toBe(0);
+    } finally {
+      await stale.stop();
+    }
+  });
 });

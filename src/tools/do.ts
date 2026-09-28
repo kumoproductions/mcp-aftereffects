@@ -188,6 +188,7 @@ export const doTool = defineTool({
         details: {
           operation: op.name,
           ...jsxErrorLocation(result.line, wrappedCode, wrapperLinesAboveUserJsx, op.name),
+          ...(result.dialogs?.length ? { dialogs: result.dialogs } : {}),
         },
         stack: result.stack,
         logs: result.logs,
