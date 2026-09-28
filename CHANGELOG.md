@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Modal dialogs are detected and named.** While After Effects shows a modal dialog no script runs, and the dialog is often hidden behind the main window, so calls used to fail with a bare TIMEOUT or NO_INSTANCE. On Windows the server now reads the dialog from outside the process and fails with the new `DIALOG_OPEN` code, quoting its text (`details.dialogs` carries the process, window title and handle). `instance.dialogs` lists what every running After Effects is showing, and `instance.dismiss_dialog { id }` closes one with Escape — its cancel action, so a warning is acknowledged and a "Save changes before closing?" prompt is cancelled (project left open and unsaved), never answered. `instance.start` reports a dialog that kept the new instance from registering the same way.
+- **Dialog detection on macOS.** A JXA script lists the windows at the modal-panel level owned by an After Effects process, so `DIALOG_OPEN` and `instance.dialogs` work without any permission (the text reads "(text unavailable)" and `accessibility: false`). With Accessibility permission for the app running the server, the text is read and `instance.dismiss_dialog` presses the dialog's Cancel button — or its only button on an OK-only warning — and refuses a dialog that offers choices but no Cancel. No keystrokes go to the frontmost app and System Events is not used. Checked against a stand-in alert on macOS 26.4; not yet against After Effects' own dialogs.
 
 ### Fixed
 

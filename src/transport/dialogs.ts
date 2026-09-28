@@ -24,8 +24,26 @@
 //
 // The scan shells out to PowerShell with a small inline C# helper (~0.6 s),
 // so it runs only where a failure has to be explained or a caller asked —
-// never on the happy path. macOS has no equivalent yet: every function here
-// reports "nothing found" there.
+// never on the happy path.
+//
+// macOS runs a JXA script through osascript (~0.15 s) in two tiers:
+//   - Without any permission, CGWindowListCopyWindowInfo lists every
+//     on-screen window with its owner pid and level. A window at the modal
+//     panel level (8, NSModalPanelWindowLevel) owned by an After Effects
+//     process is reported as a dialog, with empty text. It cannot be closed.
+//   - With Accessibility permission for the app that runs this server, the
+//     dialog's AX element (matched to the CG window by its frame) yields its
+//     text, and dismissing presses its AXCancelButton — the button Escape
+//     would press. A dialog with no cancel button but exactly one button (an
+//     OK-only warning) gets that button pressed; one exposing no buttons at all
+//     gets Escape posted to its process (CGEventPostToPid, which reaches the
+//     app without activating it). Neither path moves focus.
+// System Events is deliberately not used: the first Apple event to it raises
+// an Automation consent prompt — itself a modal — and blocks until answered.
+// Verified on macOS 26.4 against a stand-in NSAlert in another process (layer
+// 8; Escape posted without Accessibility is dropped). NOT yet verified against
+// After Effects itself: its bundle id, whether its alerts sit at layer 8, and
+// whether AX sees their text and buttons are all assumptions.
 
 import { execFile } from "node:child_process";
 
@@ -34,28 +52,42 @@ export interface AeDialog {
   pid: number;
   /**
    * Opaque dialog id — what `instance.dismiss_dialog` takes. On Windows the
-   * window handle in decimal; other platforms will use their own scheme.
+   * window handle in decimal; on macOS `<pid>:<CG window number>`.
    */
   id: string;
-  /** The dialog's message, whitespace-trimmed. */
+  /** The dialog's message, whitespace-trimmed. Empty when it could not be read. */
   text: string;
   width: number;
   height: number;
   /** Main-window title of the owning process (names the project it has open). */
   window: string | null;
+  /**
+   * macOS only: whether Accessibility permission was available, i.e. whether
+   * the text could be read and the dialog can be dismissed.
+   */
+  accessibility?: boolean;
+  /** macOS only: when the owning process launched (ms since epoch). */
+  startedAt?: number;
 }
 
 export interface DismissResult {
-  /** The handle named a visible After Effects dialog and Escape was posted. */
+  /** The id named a visible After Effects dialog and its cancel action was sent. */
   posted: boolean;
   /** The dialog was gone shortly afterwards. */
   closed: boolean;
   /** What the dialog said (null when it was not found). */
   text: string | null;
+  /**
+   * Why nothing was sent, when posted is false: no such dialog, no
+   * Accessibility permission (macOS), or no cancel action to take (macOS).
+   */
+  reason?: "not_found" | "no_permission" | "no_cancel";
 }
 
-/** Runs a PowerShell script and resolves with its stdout. Injectable for tests. */
-export type PowerShellRunner = (script: string, env: Record<string, string>) => Promise<string>;
+/** Runs a script and resolves with its stdout. Injectable for tests. */
+export type ScriptRunner = (script: string, env: Record<string, string>) => Promise<string>;
+/** Runs a PowerShell script (Windows). */
+export type PowerShellRunner = ScriptRunner;
 
 const SCAN_TIMEOUT_MS = 8_000;
 
@@ -134,6 +166,132 @@ for ($i = 0; $i -lt 20; $i++) {
 ConvertTo-Json -Compress -InputObject @{ posted = $true; closed = $closed; text = $match[0].text }
 `;
 
+// macOS: one JXA script, two modes. Everything it acts on arrives through the
+// environment (AE_MCP_DIALOG_MODE, AE_MCP_DIALOG_ID). AX calls go straight to
+// ApplicationServices; AXIsProcessTrusted never prompts.
+export const DARWIN_SCRIPT = String.raw`
+ObjC.import('Cocoa'); ObjC.import('CoreGraphics'); ObjC.import('ApplicationServices');
+function envVar(k) { var v = $.NSProcessInfo.processInfo.environment.objectForKey(k); return v.isNil() ? '' : ObjC.unwrap(v); }
+var MODAL_LAYER = 8;
+var trusted = !!$.AXIsProcessTrusted();
+function isAe(bundle) { return /^com\.adobe\.aftereffects/i.test(bundle); }
+function aeProcesses() {
+  var out = {}, apps = $.NSWorkspace.sharedWorkspace.runningApplications;
+  for (var i = 0, n = Number(apps.count); i < n; i++) {
+    var a = apps.objectAtIndex(i), bundle = ObjC.unwrap(a.bundleIdentifier) || '';
+    if (!isAe(bundle)) continue;
+    out[a.processIdentifier] = { startedAt: a.launchDate.isNil() ? 0 : Math.round(a.launchDate.timeIntervalSince1970 * 1000) };
+  }
+  return out;
+}
+function cgWindows() {
+  var r = $.CGWindowListCopyWindowInfo($.kCGWindowListOptionOnScreenOnly | $.kCGWindowListExcludeDesktopElements, 0);
+  return ObjC.deepUnwrap(ObjC.castRefToObject(r)) || [];
+}
+// Attribute names must be NSStrings. An element read from a single-valued
+// attribute has to be cast before it is passed back in; ones out of an AX
+// array can be passed as they are.
+function ax(el, attr) { var ref = Ref(); return $.AXUIElementCopyAttributeValue(el, $(attr), ref) === 0 ? ref[0] : null; }
+function axElement(el, attr) { var v = ax(el, attr); return v ? ObjC.castRefToObject(v) : null; }
+function axList(el, attr) {
+  var v = ax(el, attr), out = [];
+  if (!v) return out;
+  var arr = ObjC.castRefToObject(v);
+  for (var i = 0, n = Number(arr.count); i < n; i++) out.push(arr.objectAtIndex(i));
+  return out;
+}
+function axString(el, attr) { var v = ax(el, attr); if (!v) return ''; var s = ObjC.unwrap(ObjC.castRefToObject(v)); return typeof s === 'string' ? s : ''; }
+function axNums(el, attr) {
+  var v = ax(el, attr); if (!v) return null;
+  var m = ObjC.unwrap(ObjC.castRefToObject(v).description).match(/[xw]:(-?[\d.]+) [yh]:(-?[\d.]+)/);
+  return m ? [Number(m[1]), Number(m[2])] : null;
+}
+function axTexts(el, out, depth, budget) {
+  var kids = axList(el, 'AXChildren');
+  for (var i = 0; i < kids.length && budget.n-- > 0; i++) {
+    var role = axString(kids[i], 'AXRole');
+    if (role === 'AXStaticText' || role === 'AXTextArea' || role === 'AXTextField') {
+      var t = axString(kids[i], 'AXValue').trim(); if (t) out.push(t);
+    } else if (depth < 6) axTexts(kids[i], out, depth + 1, budget);
+  }
+  return out;
+}
+function axButtons(el, out, depth) {
+  var kids = axList(el, 'AXChildren');
+  for (var i = 0; i < kids.length; i++) {
+    if (axString(kids[i], 'AXRole') === 'AXButton') out.push(kids[i]);
+    else if (depth < 6) axButtons(kids[i], out, depth + 1);
+  }
+  return out;
+}
+function axApp(pid, cache) {
+  if (cache[pid]) return cache[pid];
+  var app = $.AXUIElementCreateApplication(pid), wins = [];
+  axList(app, 'AXWindows').forEach(function (w) { wins.push({ el: w, pos: axNums(w, 'AXPosition'), size: axNums(w, 'AXSize') }); });
+  var main = axElement(app, 'AXMainWindow');
+  return (cache[pid] = { wins: wins, title: main ? axString(main, 'AXTitle') : '' });
+}
+function near(a, b) { return Math.abs(a - b) < 2; }
+function scan() {
+  var procs = aeProcesses(), wins = cgWindows(), cache = {}, found = [];
+  var titles = {};
+  wins.forEach(function (w) { if (w.kCGWindowLayer === 0 && w.kCGWindowName && !titles[w.kCGWindowOwnerPID]) titles[w.kCGWindowOwnerPID] = w.kCGWindowName; });
+  wins.forEach(function (w) {
+    var pid = w.kCGWindowOwnerPID, b = w.kCGWindowBounds;
+    if (!procs[pid] || w.kCGWindowLayer !== MODAL_LAYER || !(w.kCGWindowAlpha > 0)) return;
+    var d = { pid: pid, id: pid + ':' + w.kCGWindowNumber, text: '', width: Math.round(b.Width), height: Math.round(b.Height),
+      window: titles[pid] || null, accessibility: trusted, startedAt: procs[pid].startedAt, number: w.kCGWindowNumber, el: null };
+    if (trusted) {
+      var app = axApp(pid, cache);
+      if (app.title) d.window = app.title;
+      app.wins.forEach(function (aw) {
+        if (!d.el && aw.pos && aw.size && near(aw.pos[0], b.X) && near(aw.pos[1], b.Y) && near(aw.size[0], b.Width) && near(aw.size[1], b.Height)) d.el = aw.el;
+      });
+      if (d.el) d.text = axTexts(d.el, [], 0, { n: 400 }).join('\n');
+    }
+    found.push(d);
+  });
+  return found;
+}
+function strip(d) { return { pid: d.pid, id: d.id, text: d.text, width: d.width, height: d.height, window: d.window, accessibility: d.accessibility, startedAt: d.startedAt }; }
+function dismiss(target) {
+  var none = { posted: false, closed: false, text: null };
+  var all = scan(), d = null;
+  all.forEach(function (x) { if (x.id === target) d = x; });
+  if (!d) { none.reason = 'not_found'; return none; }
+  if (!trusted) { none.reason = 'no_permission'; return none; }
+  var how = null;
+  if (d.el) {
+    var cancel = axElement(d.el, 'AXCancelButton');
+    var buttons = axButtons(d.el, [], 0);
+    if (cancel) { $.AXUIElementPerformAction(cancel, $('AXPress')); how = 'cancel_button'; }
+    else if (buttons.length === 1) { $.AXUIElementPerformAction(buttons[0], $('AXPress')); how = 'only_button'; }
+    else if (buttons.length > 1) { none.reason = 'no_cancel'; none.text = d.text || null; return none; }
+  }
+  if (!how) {
+    // No buttons in AX (a custom-drawn dialog, or its element not found):
+    // Escape to the process reaches its key window, so only when this is
+    // the process's only dialog.
+    var siblings = all.filter(function (x) { return x.pid === d.pid; }).length;
+    if (siblings !== 1) { none.reason = 'no_cancel'; none.text = d.text || null; return none; }
+    [true, false].forEach(function (down) { $.CGEventPostToPid(d.pid, $.CGEventCreateKeyboardEvent($(), 53, down)); });
+    how = 'escape';
+  }
+  var closed = false;
+  for (var i = 0; i < 20 && !closed; i++) {
+    delay(0.1);
+    closed = !cgWindows().some(function (w) { return w.kCGWindowNumber === d.number; });
+  }
+  return { posted: true, closed: closed, text: d.text || null, method: how };
+}
+var mode = envVar('AE_MCP_DIALOG_MODE');
+if (mode === 'dismiss') {
+  var result;
+  try { result = dismiss(envVar('AE_MCP_DIALOG_ID')); } catch (e) { result = { posted: false, closed: false, text: null, reason: 'not_found' }; }
+  JSON.stringify(result);
+} else JSON.stringify(scan().map(strip));
+`;
+
 function encodeScript(script: string): string {
   return Buffer.from(script, "utf16le").toString("base64");
 }
@@ -161,7 +319,23 @@ const defaultRunner: PowerShellRunner = (script, env) =>
     );
   });
 
+const defaultOsascriptRunner: ScriptRunner = (script, env) =>
+  new Promise((resolve, reject) => {
+    execFile(
+      "/usr/bin/osascript",
+      ["-l", "JavaScript", "-e", script],
+      {
+        env: { ...process.env, ...env },
+        timeout: SCAN_TIMEOUT_MS,
+        encoding: "utf8",
+        maxBuffer: 1024 * 1024,
+      },
+      (err, stdout) => (err ? reject(err) : resolve(stdout)),
+    );
+  });
+
 let runner: PowerShellRunner = defaultRunner;
+let osascriptRunner: ScriptRunner = defaultOsascriptRunner;
 
 /** Swap the PowerShell runner (tests). Returns a function restoring the previous one. */
 export function setPowerShellRunner(next: PowerShellRunner): () => void {
@@ -172,8 +346,22 @@ export function setPowerShellRunner(next: PowerShellRunner): () => void {
   };
 }
 
+/** Swap the osascript runner (tests). Returns a function restoring the previous one. */
+export function setOsascriptRunner(next: ScriptRunner): () => void {
+  const prev = osascriptRunner;
+  osascriptRunner = next;
+  return () => {
+    osascriptRunner = prev;
+  };
+}
+
 function scanSupported(platform: NodeJS.Platform): boolean {
-  return platform === "win32";
+  return platform === "win32" || platform === "darwin";
+}
+
+/** Whether this platform can scan for dialogs at all. */
+export function dialogScanSupported(platform: NodeJS.Platform = process.platform): boolean {
+  return scanSupported(platform);
 }
 
 /** Parse the scan's JSON output; anything unexpected yields no dialogs. */
@@ -200,6 +388,8 @@ export function parseDialogScan(raw: string): AeDialog[] {
       width: typeof e.width === "number" ? e.width : 0,
       height: typeof e.height === "number" ? e.height : 0,
       window: typeof e.window === "string" && e.window.length > 0 ? e.window : null,
+      ...(typeof e.accessibility === "boolean" ? { accessibility: e.accessibility } : {}),
+      ...(typeof e.startedAt === "number" && e.startedAt > 0 ? { startedAt: e.startedAt } : {}),
     });
   }
   return out;
@@ -215,39 +405,62 @@ export async function scanAeDialogs(
 ): Promise<AeDialog[]> {
   if (!scanSupported(platform)) return [];
   try {
-    return parseDialogScan(await runner(SCAN_SCRIPT, {}));
+    const raw =
+      platform === "darwin"
+        ? await osascriptRunner(DARWIN_SCRIPT, { AE_MCP_DIALOG_MODE: "scan" })
+        : await runner(SCAN_SCRIPT, {});
+    return parseDialogScan(raw);
   } catch {
     return [];
   }
 }
 
+const DISMISS_REASONS = new Set(["not_found", "no_permission", "no_cancel"]);
+
 /**
- * Close a dialog with Escape — its cancel action, never a decision (see the
- * header: a save prompt is cancelled, not answered). The handle must name a
- * dialog the scan would report
- * right now — anything else, including a window that has since closed or a
- * handle that was never an After Effects dialog, is refused inside the
- * script, so a stale or made-up handle can never send keys elsewhere.
+ * Close a dialog by its cancel action, never a decision (see the header: a
+ * save prompt is cancelled, not answered). The id must name a dialog the scan
+ * would report right now — anything else, including a window that has since
+ * closed or an id that was never an After Effects dialog, is refused inside
+ * the script, so a stale or made-up id can never send keys elsewhere.
  */
 export async function dismissAeDialog(
   id: string,
   platform: NodeJS.Platform = process.platform,
 ): Promise<DismissResult> {
-  if (!scanSupported(platform) || !/^\d{1,20}$/.test(id)) {
-    return { posted: false, closed: false, text: null };
-  }
-  const raw = await runner(DISMISS_SCRIPT, {
-    AE_MCP_DIALOG_ID: id,
-  });
+  const notFound: DismissResult = {
+    posted: false,
+    closed: false,
+    text: null,
+    reason: "not_found",
+  };
+  const shape = platform === "darwin" ? /^\d{1,10}:\d{1,10}$/ : /^\d{1,20}$/;
+  if (!scanSupported(platform) || !shape.test(id)) return notFound;
   try {
-    const r = JSON.parse(raw.replace(/^﻿/, "").trim()) as Partial<DismissResult>;
+    const raw =
+      platform === "darwin"
+        ? await osascriptRunner(DARWIN_SCRIPT, {
+            AE_MCP_DIALOG_MODE: "dismiss",
+            AE_MCP_DIALOG_ID: id,
+          })
+        : await runner(DISMISS_SCRIPT, { AE_MCP_DIALOG_ID: id });
+    const r = JSON.parse(raw.replace(/^\uFEFF/, "").trim()) as Partial<DismissResult>;
+    const posted = r.posted === true;
     return {
-      posted: r.posted === true,
+      posted,
       closed: r.closed === true,
       text: typeof r.text === "string" ? r.text.replace(/\r\n/g, "\n").trim() : null,
+      ...(posted
+        ? {}
+        : {
+            reason:
+              typeof r.reason === "string" && DISMISS_REASONS.has(r.reason)
+                ? r.reason
+                : "not_found",
+          }),
     };
   } catch {
-    return { posted: false, closed: false, text: null };
+    return notFound;
   }
 }
 
@@ -256,7 +469,8 @@ export function describeDialogs(dialogs: AeDialog[]): string {
   return dialogs
     .map((d) => {
       const where = d.window ? ` in "${d.window}"` : "";
-      return `"${d.text.replace(/\s*\n\s*/g, " ")}" (pid ${d.pid}${where}, id ${d.id})`;
+      const text = d.text ? `"${d.text.replace(/\s*\n\s*/g, " ")}"` : "(text unavailable)";
+      return `${text} (pid ${d.pid}${where}, id ${d.id})`;
     })
     .join("; ");
 }
@@ -271,6 +485,18 @@ export function dialogBlockMessage(dialogs: AeDialog[]): string {
 }
 
 export const DIALOG_HINT =
-  "`instance.dismiss_dialog { id }` closes it with Escape — the dialog's cancel action, so a warning is " +
+  "`instance.dismiss_dialog { id }` closes it by its cancel action (what Escape does), so a warning is " +
   "acknowledged and a question (save changes?) is cancelled, never answered — then retry. If the user needs " +
   "to answer it, ask them; it is often hidden behind the After Effects main window.";
+
+export const ACCESSIBILITY_HINT =
+  "On macOS, reading a dialog's text and closing it need Accessibility permission for the app that runs " +
+  "this MCP server (System Settings > Privacy & Security > Accessibility). Without it, dialogs are only " +
+  "detected; ask the user to close them in After Effects.";
+
+/** DIALOG_HINT, plus the Accessibility note when any dialog was seen without it. */
+export function dialogHint(dialogs: AeDialog[]): string {
+  return dialogs.some((d) => d.accessibility === false)
+    ? `${DIALOG_HINT} ${ACCESSIBILITY_HINT}`
+    : DIALOG_HINT;
+}

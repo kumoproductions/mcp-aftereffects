@@ -30,7 +30,7 @@ import {
 } from "../config.js";
 import type { AeErrorCode } from "../errors.js";
 import type { AeTransport, EvalRequest, EvalResult } from "./AeTransport.js";
-import { type AeDialog, DIALOG_HINT, dialogBlockMessage, scanAeDialogs } from "./dialogs.js";
+import { type AeDialog, dialogBlockMessage, dialogHint, scanAeDialogs } from "./dialogs.js";
 import {
   type InstanceInfo,
   type TargetResolution,
@@ -79,7 +79,7 @@ export interface FileIpcTransportOptions {
   instance?: string | null;
   /** Process launcher; defaults to child_process.spawn. */
   spawn?: SpawnFn;
-  /** Modal-dialog scan; defaults to scanAeDialogs (Windows only). Injectable for tests. */
+  /** Modal-dialog scan; defaults to scanAeDialogs (Windows and macOS). Injectable for tests. */
   scanDialogs?: () => Promise<AeDialog[]>;
 }
 
@@ -837,7 +837,7 @@ function failure(
 function dialogFailure(dialogs: AeDialog[], outcome: string, started: number): EvalResult {
   return failure("DIALOG_OPEN", `${dialogBlockMessage(dialogs)} — ${outcome}`, {
     durationMs: Date.now() - started,
-    hint: DIALOG_HINT,
+    hint: dialogHint(dialogs),
     dialogs,
   });
 }

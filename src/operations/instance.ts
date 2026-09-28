@@ -28,8 +28,10 @@ import {
 import { jsxFail, jsxVal, registerOp } from "../registry.js";
 import type { AeTransport } from "../transport/AeTransport.js";
 import {
-  DIALOG_HINT,
+  ACCESSIBILITY_HINT,
   dialogBlockMessage,
+  dialogHint,
+  dialogScanSupported,
   dismissAeDialog,
   scanAeDialogs,
 } from "../transport/dialogs.js";
@@ -263,12 +265,16 @@ registerOp({
       await sleep(500);
     }
     if (registered === null) {
-      const dialogs = (await scanAeDialogs()).filter((d) => d.pid === child.pid);
+      // Windows: the spawned process IS the instance. macOS: `open -n` exits
+      // at once, so the instance is the After Effects that launched since.
+      const dialogs = (await scanAeDialogs()).filter(
+        (d) => d.pid === child.pid || (d.startedAt ?? 0) >= launchedAt - 2_000,
+      );
       if (dialogs.length > 0) {
         return {
           ...fail(
             `instance '${name}' did not register within ${timeoutMs} ms: ${dialogBlockMessage(dialogs)}`,
-            { errorCode: "DIALOG_OPEN", hint: DIALOG_HINT },
+            { errorCode: "DIALOG_OPEN", hint: dialogHint(dialogs) },
           ),
           dialogs,
         };
@@ -441,7 +447,8 @@ registerOp({
     "List the modal dialogs every running After Effects is showing — the message text, the owning process " +
     "and its window title, and an id for instance.dismiss_dialog. While a dialog is open no script runs " +
     "(calls fail with DIALOG_OPEN, or an instance stops ticking), and the dialog is often hidden behind the " +
-    "main window. Windows only; elsewhere the list is always empty.",
+    "main window. Windows and macOS. On macOS the text is read only with Accessibility permission for the " +
+    "app running this server; without it dialogs are still listed, with empty text (`accessibility: false`).",
   params: [],
   readOnly: true,
   toJsx: () => nodeOnly("instance.dialogs"),
@@ -450,7 +457,7 @@ registerOp({
     return {
       ok: true,
       dialogs,
-      supported: process.platform === "win32",
+      supported: dialogScanSupported(),
     };
   },
 });
@@ -459,11 +466,13 @@ registerOp({
   name: "instance.dismiss_dialog",
   category: "instance",
   description:
-    "Close a modal dialog After Effects is showing by pressing Escape — its cancel action. A warning " +
+    "Close a modal dialog After Effects is showing by its cancel action (what Escape does). A warning " +
     "(missing files or fonts, a script alert) is acknowledged; a question is cancelled, never answered: " +
     '"Save changes before closing?" leaves the project open and unsaved. Take `id` from instance.dialogs ' +
     "or from a DIALOG_OPEN error's details.dialogs. When the user wants a dialog answered some other way " +
-    "(Save, Replace…), ask them to click it. Windows only.",
+    "(Save, Replace…), ask them to click it. Windows and macOS; on macOS it needs Accessibility permission, " +
+    "presses the dialog's Cancel button (or its only button, on an OK-only warning), and refuses a dialog " +
+    "that offers choices but no Cancel.",
   params: [
     {
       name: "id",
@@ -474,11 +483,23 @@ registerOp({
   ],
   toJsx: () => nodeOnly("instance.dismiss_dialog"),
   async run(args) {
-    if (process.platform !== "win32") {
-      return fail("instance.dismiss_dialog is only available on Windows");
+    if (!dialogScanSupported()) {
+      return fail("instance.dismiss_dialog is only available on Windows and macOS");
     }
     const id = typeof args.id === "string" ? args.id.trim() : "";
     const r = await dismissAeDialog(id);
+    if (r.reason === "no_permission") {
+      return fail(`cannot close After Effects dialog ${id}: no Accessibility permission`, {
+        hint: ACCESSIBILITY_HINT,
+      });
+    }
+    if (r.reason === "no_cancel") {
+      return fail(
+        `After Effects dialog ${id} has no Cancel to press, only choices — it was left open` +
+          (r.text ? `: "${r.text.replace(/\s*\n\s*/g, " ")}"` : ""),
+        { hint: "Ask the user to answer it in After Effects." },
+      );
+    }
     if (!r.posted) {
       return fail(
         `no After Effects dialog with id ${JSON.stringify(id)} is open — it may already be closed`,
@@ -494,7 +515,7 @@ registerOp({
       ...(r.closed
         ? {}
         : {
-            hint: "The dialog did not close on Escape — ask the user to answer it in After Effects.",
+            hint: "The dialog did not close on its cancel action — ask the user to answer it in After Effects.",
           }),
     };
   },

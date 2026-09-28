@@ -25,24 +25,30 @@ import {
   responsePathFor,
 } from "../src/config.js";
 import { FileIpcTransport } from "../src/transport/FileIpcTransport.js";
-import { setPowerShellRunner } from "../src/transport/dialogs.js";
+import { setOsascriptRunner, setPowerShellRunner } from "../src/transport/dialogs.js";
 
 // The transport scans for After Effects dialogs on its failure paths. Never
 // let that reach the real desktop from a unit test.
-let restoreRunner: () => void;
+let restoreRunners: Array<() => void> = [];
 beforeAll(() => {
-  restoreRunner = setPowerShellRunner(async () => "[]");
+  restoreRunners = [setPowerShellRunner(async () => "[]"), setOsascriptRunner(async () => "[]")];
 });
-afterAll(() => restoreRunner());
+afterAll(() => restoreRunners.forEach((restore) => restore()));
 
 /**
  * An executable that exists and starts, but will never write a response.
  *
  * Per-platform because `resolveAfterFxPath` stats it: a Windows-only path made
  * every timeout and busy-lock test fail with AE_NOT_FOUND on Linux CI, before
- * the behaviour under test could run at all.
+ * the behaviour under test could run at all. (`/usr/bin/true`: macOS has no
+ * `/bin/true`.)
  */
-const INERT_EXE = process.platform === "win32" ? "C:/Windows/System32/cmd.exe" : "/bin/true";
+const INERT_EXE = process.platform === "win32" ? "C:/Windows/System32/cmd.exe" : "/usr/bin/true";
+
+// On macOS the push path is `osascript … tell application <bundle> to
+// DoScript`, and osascript fails at once against an executable that is not an
+// app (TRANSPORT) instead of leaving the request unconsumed until TIMEOUT.
+const itUnlessDarwin = it.skipIf(process.platform === "darwin");
 
 const savedExe = process.env.AE_MCP_EXE;
 
@@ -124,7 +130,7 @@ describe("timeout", () => {
     transport = new FileIpcTransport({ instance: null });
   });
 
-  it("returns TIMEOUT and reclaims the unconsumed request", async () => {
+  itUnlessDarwin("returns TIMEOUT and reclaims the unconsumed request", async () => {
     const before = await mailboxEntries(REQUEST_PREFIX);
     const res = await transport.execute({
       code: "return 1;",
@@ -187,7 +193,7 @@ describe("busy lock", () => {
     await expect(fs.access(BUSY_LOCK_PATH)).resolves.toBeUndefined();
   });
 
-  it("breaks a stale lock and proceeds with the call", async () => {
+  itUnlessDarwin("breaks a stale lock and proceeds with the call", async () => {
     await fs.writeFile(BUSY_LOCK_PATH, JSON.stringify({ pid: 0, id: "orphan" }), "utf8");
     const expired = new Date(Date.now() - BUSY_LOCK_STALE_MS - 60_000);
     await fs.utimes(BUSY_LOCK_PATH, expired, expired);
@@ -230,20 +236,24 @@ describe("busy lock", () => {
     expect(held.id).toBe("successor");
   });
 
-  it("relaunches the dispatcher while the request stays unconsumed", async () => {
-    // AE refusing our script (its "second script" warning) leaves the request
-    // file unconsumed — the transport must try again rather than wait out the
-    // whole timeout on a launch that already died.
-    const transport = new FileIpcTransport({ instance: null });
-    const res = await transport.execute({
-      code: "return 1;",
-      label: "offline_relaunch",
-      timeoutMs: 6_000,
-    });
+  itUnlessDarwin(
+    "relaunches the dispatcher while the request stays unconsumed",
+    async () => {
+      // AE refusing our script (its "second script" warning) leaves the request
+      // file unconsumed — the transport must try again rather than wait out the
+      // whole timeout on a launch that already died.
+      const transport = new FileIpcTransport({ instance: null });
+      const res = await transport.execute({
+        code: "return 1;",
+        label: "offline_relaunch",
+        timeoutMs: 6_000,
+      });
 
-    expect(res.errorCode).toBe("TIMEOUT");
-    expect(res.error).toMatch(/after 2 launch attempts/);
-  }, 15_000);
+      expect(res.errorCode).toBe("TIMEOUT");
+      expect(res.error).toMatch(/after 2 launch attempts/);
+    },
+    15_000,
+  );
 });
 
 describe("undo group flag", () => {

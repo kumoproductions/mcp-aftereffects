@@ -1,22 +1,34 @@
-// Dialog scan plumbing, without a desktop: the PowerShell runner is replaced,
-// so what is under test is parsing, validation and the refusal paths.
+// Dialog scan plumbing, without a desktop: the PowerShell and osascript
+// runners are replaced, so what is under test is parsing, validation and the
+// refusal paths.
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  ACCESSIBILITY_HINT,
+  DARWIN_SCRIPT,
+  DIALOG_HINT,
   describeDialogs,
   dialogBlockMessage,
+  dialogHint,
   dismissAeDialog,
   parseDialogScan,
   scanAeDialogs,
+  setOsascriptRunner,
   setPowerShellRunner,
 } from "../src/transport/dialogs.js";
 
-let restore: (() => void) | null = null;
+let restores: Array<() => void> = [];
 afterEach(() => {
-  restore?.();
-  restore = null;
+  restores.forEach((restore) => restore());
+  restores = [];
 });
+function stubPowerShell(run: Parameters<typeof setPowerShellRunner>[0]): void {
+  restores.push(setPowerShellRunner(run));
+}
+function stubOsascript(run: Parameters<typeof setOsascriptRunner>[0]): void {
+  restores.push(setOsascriptRunner(run));
+}
 
 const SCANNED = {
   pid: 126576,
@@ -52,18 +64,22 @@ describe("parseDialogScan", () => {
 });
 
 describe("scanAeDialogs", () => {
-  it("reports nothing off Windows without running anything", async () => {
+  it("reports nothing on unsupported platforms without running anything", async () => {
     let ran = false;
-    restore = setPowerShellRunner(async () => {
+    stubPowerShell(async () => {
       ran = true;
       return JSON.stringify(SCANNED);
     });
-    expect(await scanAeDialogs("darwin")).toEqual([]);
+    stubOsascript(async () => {
+      ran = true;
+      return JSON.stringify(SCANNED);
+    });
+    expect(await scanAeDialogs("linux")).toEqual([]);
     expect(ran).toBe(false);
   });
 
   it("never turns a failed scan into a failure", async () => {
-    restore = setPowerShellRunner(async () => {
+    stubPowerShell(async () => {
       throw new Error("powershell.exe not found");
     });
     expect(await scanAeDialogs("win32")).toEqual([]);
@@ -73,19 +89,24 @@ describe("scanAeDialogs", () => {
 describe("dismissAeDialog", () => {
   it("refuses a handle that is not a number without running anything", async () => {
     let ran = false;
-    restore = setPowerShellRunner(async () => {
+    stubPowerShell(async () => {
       ran = true;
       return "{}";
     });
     const r = await dismissAeDialog("1; Stop-Process -Name AfterFX", "win32");
-    expect(r).toEqual({ posted: false, closed: false, text: null });
+    expect(r).toEqual({
+      posted: false,
+      closed: false,
+      text: null,
+      reason: "not_found",
+    });
     expect(ran).toBe(false);
   });
 
   it("passes the handle through the environment, not the script", async () => {
     let seen: Record<string, string> = {};
     let script = "";
-    restore = setPowerShellRunner(async (s, env) => {
+    stubPowerShell(async (s, env) => {
       seen = env;
       script = s;
       return JSON.stringify({ posted: true, closed: true, text: "Warning\r\n" });
@@ -94,6 +115,136 @@ describe("dismissAeDialog", () => {
     expect(r).toEqual({ posted: true, closed: true, text: "Warning" });
     expect(seen).toEqual({ AE_MCP_DIALOG_ID: "26744242" });
     expect(script).not.toContain("26744242");
+  });
+
+  it("reports a failed dismiss script as not found instead of throwing", async () => {
+    stubPowerShell(async () => {
+      throw new Error("powershell.exe not found");
+    });
+    expect(await dismissAeDialog("26744242", "win32")).toMatchObject({
+      posted: false,
+      reason: "not_found",
+    });
+  });
+});
+
+// What DARWIN_SCRIPT prints: the CG window number is part of the id, and
+// `accessibility` says whether AX could read the text.
+const MAC_SCANNED = {
+  pid: 812,
+  id: "812:4471",
+  text: "3 files are missing since you last saved this project.",
+  width: 420,
+  height: 180,
+  window: "Adobe After Effects 2026 - /Users/me/ShotA.aep",
+  accessibility: true,
+  startedAt: 1_790_000_000_000,
+};
+
+describe("macOS", () => {
+  it("scans through osascript, never PowerShell", async () => {
+    let ps = false;
+    let env: Record<string, string> = {};
+    let script = "";
+    stubPowerShell(async () => {
+      ps = true;
+      return "[]";
+    });
+    stubOsascript(async (s, e) => {
+      script = s;
+      env = e;
+      return JSON.stringify([MAC_SCANNED]) + "\n";
+    });
+    const [d] = await scanAeDialogs("darwin");
+    expect(ps).toBe(false);
+    expect(script).toBe(DARWIN_SCRIPT);
+    expect(env).toEqual({ AE_MCP_DIALOG_MODE: "scan" });
+    expect(d).toEqual(MAC_SCANNED);
+  });
+
+  it("keeps a dialog whose text could not be read, and says so", async () => {
+    stubOsascript(async () =>
+      JSON.stringify([{ ...MAC_SCANNED, text: "", window: null, accessibility: false }]),
+    );
+    const dialogs = await scanAeDialogs("darwin");
+    expect(dialogs).toHaveLength(1);
+    expect(describeDialogs(dialogs)).toBe("(text unavailable) (pid 812, id 812:4471)");
+    expect(dialogHint(dialogs)).toBe(`${DIALOG_HINT} ${ACCESSIBILITY_HINT}`);
+    expect(dialogHint([MAC_SCANNED])).toBe(DIALOG_HINT);
+  });
+
+  it("never turns a failed scan into a failure", async () => {
+    stubOsascript(async () => {
+      throw new Error("osascript: execution error (-2700)");
+    });
+    expect(await scanAeDialogs("darwin")).toEqual([]);
+  });
+
+  it("refuses ids that are not <pid>:<window> without running anything", async () => {
+    let ran = false;
+    stubOsascript(async () => {
+      ran = true;
+      return "{}";
+    });
+    for (const id of ["26744242", '812:4471\'; do shell script "rm -rf ~"', "812:", ":4471", ""]) {
+      expect(await dismissAeDialog(id, "darwin")).toMatchObject({
+        posted: false,
+        reason: "not_found",
+      });
+    }
+    expect(ran).toBe(false);
+  });
+
+  it("passes the id through the environment, not the script", async () => {
+    let env: Record<string, string> = {};
+    let script = "";
+    stubOsascript(async (s, e) => {
+      script = s;
+      env = e;
+      return JSON.stringify({
+        posted: true,
+        closed: true,
+        text: "Warning",
+        method: "cancel_button",
+      });
+    });
+    expect(await dismissAeDialog("812:4471", "darwin")).toEqual({
+      posted: true,
+      closed: true,
+      text: "Warning",
+    });
+    expect(env).toEqual({
+      AE_MCP_DIALOG_MODE: "dismiss",
+      AE_MCP_DIALOG_ID: "812:4471",
+    });
+    expect(script).toBe(DARWIN_SCRIPT);
+  });
+
+  it("carries why nothing was pressed", async () => {
+    for (const reason of ["no_permission", "no_cancel", "not_found"] as const) {
+      stubOsascript(async () =>
+        JSON.stringify({ posted: false, closed: false, text: null, reason }),
+      );
+      expect((await dismissAeDialog("812:4471", "darwin")).reason).toBe(reason);
+    }
+    stubOsascript(async () =>
+      JSON.stringify({
+        posted: false,
+        closed: false,
+        text: null,
+        reason: "weird",
+      }),
+    );
+    expect((await dismissAeDialog("812:4471", "darwin")).reason).toBe("not_found");
+  });
+
+  it("never sends keys anywhere but the matched dialog's process, and presses no default button", () => {
+    // The Escape fallback targets the dialog's own pid; Return (36) and
+    // keystroke-to-frontmost are never used.
+    expect(DARWIN_SCRIPT).toContain("CGEventPostToPid(d.pid");
+    expect(DARWIN_SCRIPT).not.toMatch(
+      /CGEventPost\(|keystroke|System Events|AXDefaultButton|, 36,/,
+    );
   });
 });
 

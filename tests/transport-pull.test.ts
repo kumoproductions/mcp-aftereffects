@@ -29,15 +29,19 @@ import {
   type LaunchedProcess,
   type SpawnFn,
 } from "../src/transport/FileIpcTransport.js";
-import { type AeDialog, setPowerShellRunner } from "../src/transport/dialogs.js";
+import {
+  type AeDialog,
+  setOsascriptRunner,
+  setPowerShellRunner,
+} from "../src/transport/dialogs.js";
 
 // The transport scans for After Effects dialogs on its failure paths. Never
 // let that reach the real desktop from a unit test.
-let restoreRunner: () => void;
+let restoreRunners: Array<() => void> = [];
 beforeAll(() => {
-  restoreRunner = setPowerShellRunner(async () => "[]");
+  restoreRunners = [setPowerShellRunner(async () => "[]"), setOsascriptRunner(async () => "[]")];
 });
-afterAll(() => restoreRunner());
+afterAll(() => restoreRunners.forEach((restore) => restore()));
 
 const DIALOG: AeDialog = {
   pid: 4242,
@@ -49,7 +53,10 @@ const DIALOG: AeDialog = {
 };
 const seesDialog = async () => [DIALOG];
 
-const INERT_EXE = process.platform === "win32" ? "C:/Windows/System32/cmd.exe" : "/bin/true";
+const INERT_EXE = process.platform === "win32" ? "C:/Windows/System32/cmd.exe" : "/usr/bin/true";
+// Phantom detection is the `-r` path's; osascript legitimately blocks for the
+// DoScript duration, so macOS never treats a live child as a phantom.
+const itUnlessDarwin = it.skipIf(process.platform === "darwin");
 const savedExe = process.env.AE_MCP_EXE;
 
 afterEach(() => {
@@ -401,29 +408,37 @@ describe("push path: phantom launch guard", () => {
     }
   });
 
-  it("kills a launcher child that outlives a forwarder and reports NO_INSTANCE", async () => {
-    // AfterFX.exe that never exits = it is booting an instance of its own
-    // (nothing registered to receive -r: none running, or only -m ones). Left
-    // alone it would run the request on an empty project and report success.
-    const launcher = recordingSpawn(() => {});
-    const transport = new FileIpcTransport({ instance: null, spawn: launcher.spawn });
-    const started = Date.now();
-    const res = await transport.execute({ code: "return 1;", label: "phantom", timeoutMs: 30_000 });
-    const elapsed = Date.now() - started;
+  itUnlessDarwin(
+    "kills a launcher child that outlives a forwarder and reports NO_INSTANCE",
+    async () => {
+      // AfterFX.exe that never exits = it is booting an instance of its own
+      // (nothing registered to receive -r: none running, or only -m ones). Left
+      // alone it would run the request on an empty project and report success.
+      const launcher = recordingSpawn(() => {});
+      const transport = new FileIpcTransport({ instance: null, spawn: launcher.spawn });
+      const started = Date.now();
+      const res = await transport.execute({
+        code: "return 1;",
+        label: "phantom",
+        timeoutMs: 30_000,
+      });
+      const elapsed = Date.now() - started;
 
-    expect(res.ok).toBe(false);
-    expect(res.errorCode).toBe("NO_INSTANCE");
-    expect(res.error).toContain("booting");
-    expect(res.error).toContain("-m");
-    expect(res.error).toContain("install-agent");
-    // Decided at PHANTOM_LAUNCH_MS, not at the deadline.
-    expect(elapsed).toBeGreaterThanOrEqual(PHANTOM_LAUNCH_MS - 200);
-    expect(elapsed).toBeLessThan(PHANTOM_LAUNCH_MS + 3_000);
-    // One launch only — relaunching would have booted a second throwaway AE.
-    expect(launcher.calls).toBe(1);
-    expect(launcher.children[0].killed).toBe(true);
-    await expect(fs.access(BUSY_LOCK_PATH)).rejects.toThrow();
-  }, 15_000);
+      expect(res.ok).toBe(false);
+      expect(res.errorCode).toBe("NO_INSTANCE");
+      expect(res.error).toContain("booting");
+      expect(res.error).toContain("-m");
+      expect(res.error).toContain("install-agent");
+      // Decided at PHANTOM_LAUNCH_MS, not at the deadline.
+      expect(elapsed).toBeGreaterThanOrEqual(PHANTOM_LAUNCH_MS - 200);
+      expect(elapsed).toBeLessThan(PHANTOM_LAUNCH_MS + 3_000);
+      // One launch only — relaunching would have booted a second throwaway AE.
+      expect(launcher.calls).toBe(1);
+      expect(launcher.children[0].killed).toBe(true);
+      await expect(fs.access(BUSY_LOCK_PATH)).rejects.toThrow();
+    },
+    15_000,
+  );
 
   it("treats a child that exits promptly as a forwarder and keeps relaunching", async () => {
     // The real forwarder hands the script over and exits within a second;

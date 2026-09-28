@@ -236,14 +236,19 @@ The call had no After Effects to go to. Either every running After Effects was s
 
 ### `DIALOG_OPEN` — After Effects Is Showing a Dialog
 
-While After Effects shows a modal dialog, no script runs at all — neither the resident agent nor a `-r` launch. The most common cause is opening a project whose footage or fonts are missing ("N files are missing since you last saved this project"), and the dialog is often hidden behind the main window. On Windows the error quotes the dialog's text.
+While After Effects shows a modal dialog, no script runs at all — neither the resident agent nor a `-r` launch. The most common cause is opening a project whose footage or fonts are missing ("N files are missing since you last saved this project"), and the dialog is often hidden behind the main window. The error quotes the dialog's text (on macOS, see below).
 
 - `instance.dialogs` lists the dialogs every running After Effects is showing.
 - `instance.dismiss_dialog { id }` closes it with Escape, the dialog's cancel action: a warning is acknowledged, and a question such as "Save changes before closing?" is cancelled rather than answered — nothing is saved or discarded. A dialog you want answered differently has to be clicked by you.
 - The agent resumes on its own once the dialog is gone; no restart is needed.
 - To avoid the missing-files warning in the first place, start After Effects without a project and open it with `project.open`, which suppresses the dialog.
 
-Dialog detection is Windows-only for now.
+Dialog detection works on Windows and macOS. On macOS it has two tiers:
+
+- Without any permission, a dialog is detected — the call still fails with `DIALOG_OPEN` rather than a bare timeout — but its text is not readable (`accessibility: false`, text empty) and it cannot be dismissed from here.
+- With Accessibility permission for the app that runs the MCP server (System Settings > Privacy & Security > Accessibility — your terminal, or the MCP client app), the text is read and `instance.dismiss_dialog` works: it presses the dialog's Cancel button, or its only button on an OK-only warning. A dialog that offers choices but no Cancel (Save / Don't Save) is left open for you to answer. Nothing takes keyboard focus.
+
+The macOS side has been checked against a stand-in system alert, not yet against After Effects' own dialogs.
 
 ### After Effects Stops at a "We detected a crash" Dialog
 
