@@ -17,6 +17,9 @@ describe("buildLaunchPlan (win32)", () => {
     expect(plan.command).toBe(AE_WIN);
     expect(plan.args).toEqual(["-r", "C:/pkg/jsx/dispatcher.jsx"]);
     expect(plan.diagnoseExit).toBe(false);
+    // A forwarder exits within a second; one that lingers is AE booting a
+    // throwaway instance because nothing was registered to receive `-r`.
+    expect(plan.detectPhantom).toBe(true);
   });
 });
 
@@ -25,6 +28,8 @@ describe("buildLaunchPlan (darwin)", () => {
     const plan = buildLaunchPlan(AE_MAC, "darwin", RUNTIME, DISPATCHER);
     expect(plan.command).toBe("/usr/bin/osascript");
     expect(plan.diagnoseExit).toBe(true);
+    // osascript legitimately blocks for the whole DoScript — never a phantom.
+    expect(plan.detectPhantom).toBe(false);
 
     const tellLine = plan.args.find((a) => a.startsWith("tell application"));
     expect(tellLine).toBeDefined();

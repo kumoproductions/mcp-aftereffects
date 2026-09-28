@@ -16,6 +16,12 @@ import type { ToolResult } from "./tools/types.js";
 export type AeErrorCode =
   /** After Effects could not be located on this machine. */
   | "AE_NOT_FOUND"
+  /**
+   * No running After Effects instance can take the call: the one named by
+   * AE_MCP_INSTANCE has no live agent, several are live and none was named,
+   * or the push launch started a throwaway instance instead of reaching one.
+   */
+  | "NO_INSTANCE"
   /** AE never wrote a response before the deadline. */
   | "TIMEOUT"
   /** Node-side failure: spawn, filesystem, JSON write. */

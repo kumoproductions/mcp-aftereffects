@@ -30,6 +30,19 @@ const CODE = `
             file: app.project.file ? app.project.file.fsName.replace(/\\\\/g, "/") : null,
             dirty: app.project.dirty
         },
+        // The resident agent (pull path), when this instance runs one. null
+        // means the call arrived through the push path (AfterFX.exe -r).
+        agent: AE.safeGet(function () {
+            var a = $.global.AE_MCP_AGENT;
+            if (!a) return null;
+            return {
+                id: a.state.id,
+                idSource: a.state.idSource,
+                agentVersion: a.state.agentVersion,
+                ticks: a.state.ticks,
+                served: a.state.served
+            };
+        }, null),
         server: {
             exportSchemaVersion: AE.EXPORT_SCHEMA_VERSION
         }

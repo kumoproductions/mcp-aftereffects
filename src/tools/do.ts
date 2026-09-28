@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { errorResult } from "../errors.js";
+import { type AeErrorCode, errorResult } from "../errors.js";
 import { summarizeParams, suggestName, validateOpArgs } from "../opschema.js";
 import { denyOperation, denyUnregisteredOperation } from "../policy.js";
 import {
@@ -116,6 +116,42 @@ export const doTool = defineTool({
       return errorResult("FORBIDDEN", consent, {
         details: { operation: op.name, category: op.category },
         hint: "Ask the user first if they have not explicitly requested this change.",
+      });
+    }
+
+    // Node-side operations (instance.start / stop / list) manage After Effects
+    // from outside it: no ExtendScript, no undo group, no ambient context —
+    // they report what they did and the transport they used.
+    if (op.run) {
+      const started = Date.now();
+      let opResult: unknown;
+      try {
+        opResult = await op.run(validated.value, transport);
+      } catch (err) {
+        return errorResult(
+          "TRANSPORT",
+          `${op.name}: ${err instanceof Error ? err.message : String(err)}`,
+          {
+            details: { operation: op.name },
+            stack: err instanceof Error ? (err.stack ?? null) : null,
+            durationMs: Date.now() - started,
+          },
+        );
+      }
+      const reported = jsxReportedFailure(opResult);
+      if (reported) {
+        const extra = opResult as { errorCode?: AeErrorCode; hint?: string };
+        return errorResult(extra.errorCode ?? "OPERATION_FAILED", `${op.name}: ${reported.error}`, {
+          details: { operation: op.name, result: opResult },
+          durationMs: Date.now() - started,
+          ...(extra.hint ? { hint: extra.hint } : {}),
+        });
+      }
+      return jsonResult({
+        result: opResult,
+        context: null,
+        logs: [],
+        durationMs: Date.now() - started,
       });
     }
 

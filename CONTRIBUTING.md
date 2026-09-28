@@ -74,6 +74,19 @@ Response shape: `{ id, ok, phase, result, error, stack, logs }`. `phase` disting
 
 The transport (`src/transport/FileIpcTransport.ts`) never throws — every failure mode, including "AfterFX.exe not found", comes back as a normal `ok: false` result carrying an `errorCode`. Calls from one process are serialized Node-side; AE's JSX engine is single-threaded anyway. When things go wrong, `dispatcher.log` and `dispatcher_start.txt` in the mailbox tell you how far the dispatcher got.
 
+### The pull path: several After Effects instances
+
+Steps 3–4 above are the **push** path, and it has a hard limit: `AfterFX.exe -r` is handed to whichever After Effects registered as _the_ running instance. Instances started with `AfterFX.exe -m` never register, so they never receive it — and with none registered, the spawned `AfterFX.exe` becomes an instance of its own, runs the script on an empty project about eight seconds later, and quits (all verified on AE 26.3). The transport recognises that case by the launcher child outliving a forwarder (`PHANTOM_LAUNCH_MS`), kills it, and reports `NO_INSTANCE`.
+
+Multiple instances are served by the **pull** path instead:
+
+- `jsx/agent.jsx` is loaded at launch by a stub in After Effects' user-level `Scripts/Startup` folder (`mcp-aftereffects install-agent` writes it; `src/agent-install.ts`). Startup scripts run in every instance, `-m` or not.
+- The agent picks an id — `AE_MCP_INSTANCE` from the AE process's own environment (`$.getenv`), else a random `ae-…` — creates `<mailbox>/instances/<id>/`, and from `app.scheduleTask` (250 ms) keeps `heartbeat.json` there fresh (every second; flagged `busy` around a request, because ticks do not fire while a script runs) and serves at most one `request-*.json` per tick through the same `AE_MCP.serveRequest` (`jsx/serve.jsx`) the dispatcher uses.
+- `src/transport/instances.ts` reads those heartbeats and resolves a target: a per-call `instance` (every AE-touching tool declares the argument in `src/tools/index.ts`) wins over the transport's constructor option, which wins over `AE_MCP_INSTANCE`; with nothing named, one live agent is used, none means push, several is an error. A target matches an instance's id exactly, its open project's file stem case-insensitively, or — when the target contains a path separator — the project's whole path. Instances are labelled project-first (`ShotA.aep [ae-t6s4fl]`) everywhere they are listed.
+- A pull call writes the request into the instance directory and polls the response next to it — no spawn, no busy lock (the agent dequeues one request per tick). While the request sits unconsumed it re-reads the heartbeat every second and fails with `NO_INSTANCE` as soon as the instance stops ticking.
+
+`instance.start` / `instance.stop` / `instance.list` (`src/operations/instance.ts`) are Node-side operations — `Operation.run` instead of `toJsx` — that launch `AfterFX.exe -m` with `AE_MCP_INSTANCE` in its environment and wait for the heartbeat, or ask an instance to `app.quit()`. **Never terminate an After Effects process to clean up**: the next launch on that machine stops at the "We detected a crash" Safe Mode dialog until someone dismisses it, which breaks every later `instance.start`.
+
 ### The mailbox is the trust boundary
 
 `dispatcher.jsx` executes the `code` string of whatever request it finds, inside After Effects, with AE's full authority. It has no signature to check and no access to the capability policy — `AE_MCP_READONLY`, `AE_MCP_ENABLE_EVAL` and the category allowlist all live on the Node side and are applied while _generating_ that code. So write access to the mailbox is equivalent to arbitrary code execution, and everything about it is arranged around keeping that access narrow:
@@ -82,7 +95,8 @@ The transport (`src/transport/FileIpcTransport.ts`) never throws — every failu
 - Its parent — `<temp>/mcp-aftereffects/`, which holds `runtime-dir.txt` — is checked the same way. The dispatcher follows that pointer _before_ looking at the default mailbox, so write access there is write access to the mailbox: plant a pointer, plant a request, and the dispatcher runs it out of a directory of the writer's choosing even though the real mailbox is private.
 - On Windows both mode checks are inert (Node reports a synthetic mode; the per-user ACL on `%TEMP%` is what carries the property). Silence there would read as "checked, and fine", so a mailbox relocated by `AE_MCP_RUNTIME_DIR` gets an explicit "ACL not verified" warning at startup instead. The default location says nothing.
 - The dispatcher reads from as few places as possible. When the macOS launcher injects the exact mailbox path via `DoScript`, that path is used **alone** — falling back would mean executing a request some other party left elsewhere. The in-package location is not a candidate at all.
-- Tools that take an output path (`ae_render_frame`, `ae_project_export_json`, and the `render.frame` operation) refuse to write inside the mailbox, so nothing routed through the server can feed the transport its own input.
+- Tools that take an output path (`ae_render_frame`, `ae_project_export_json`, the `render.frame` operation, and `instance.start`'s `copyTo`) refuse to write inside the mailbox, so nothing routed through the server can feed the transport its own input.
+- The resident agent (pull path) widens _when_ the boundary matters, not _who_ can cross it: it polls `instances/<id>/` for the whole After Effects session, server or no server, so write access to the mailbox is code execution for as long as AE runs. Two consequences are built in. The agent's mailbox path is pinned into the Startup stub at install time and it never follows `runtime-dir.txt` — a resident poller that did would let any local writer plant a pointer and redirect every instance to a mailbox of their own; changing `AE_MCP_RUNTIME_DIR` therefore means re-running `install-agent` (`agent-status` reports the stub as stale). And the stub loads `jsx/agent.jsx` from the package path it was installed from, so it trusts exactly what the server itself trusts: whoever can rewrite the package can already rewrite the server.
 - Everything the dispatcher reads goes through the guarded `JSON.parse` in `jsx/json2.jsx`, which validates before it evals — see the comment there before touching it.
 
 ### Mailbox contents
@@ -93,25 +107,27 @@ The transport (`src/transport/FileIpcTransport.ts`) never throws — every failu
 - `response-<id>.json` — its reply, deleted by the server once collected
 - `dispatcher.log` — append-only debug log written by `dispatcher.jsx`. A "no pending request; searched: …" line means AE and the server disagree about where the mailbox is (most likely AE running as a different user).
 - `dispatcher_start.txt` — proof-of-life marker written at the top of each dispatcher run
+- `instances/<id>/` — one directory per After Effects instance running the resident agent: its `heartbeat.json`, its own `request-*.json` / `response-*.json`, and `agent.log`. Swept once the heartbeat is an hour old.
   Orphaned request/response files older than an hour are swept on server startup. Nothing else belongs in here — the sweeper only knows about mail, and the tools refuse to write into it. E2E artifacts (project backups, roundtrip documents) go to `%TEMP%\mcp-aftereffects-e2e\` instead.
 
 ## Error envelope
 
 Every tool failure returns the same shape — `{ ok: false, error: { code, message, retryable, details?, hint? } }` — so the model branches on `code` instead of pattern-matching prose. The codes (`src/errors.ts`):
 
-| Code                              | Meaning                                                                     | What to do                                         |
-| --------------------------------- | --------------------------------------------------------------------------- | -------------------------------------------------- |
-| `TIMEOUT`                         | AE never answered (retryable)                                               | Retry; check AE is running and not showing a modal |
-| `TRANSPORT`                       | Spawn or filesystem failure on the Node side (retryable)                    | Check `AE_MCP_EXE`; retry                          |
-| `AE_NOT_FOUND`                    | `AfterFX.exe` could not be located                                          | Set `AE_MCP_EXE`                                   |
-| `INVALID_ARGS`                    | Arguments failed the operation's parameter schema                           | Fix the args (`details.issues` says how)           |
-| `UNKNOWN_OPERATION` / `_CATEGORY` | No such operation/category                                                  | `ae_catalog`; `details.suggestion` may name it     |
-| `FORBIDDEN`                       | Blocked by the capability policy                                            | Stop — this is a deployment decision, not a bug    |
-| `OPERATION_FAILED`                | The operation ran and reported failure (comp not found, index out of range) | Fix the target and retry                           |
-| `JSX_THROW`                       | The generated ExtendScript threw inside AE                                  | Inspect `stack`                                    |
-| `DISPATCHER`                      | dispatcher.jsx failed before running our code                               | Check the mailbox and AE's scripting preference    |
-| `VALIDATION`                      | A project JSON document failed schema validation                            | Fix the document; `dryRun` to inspect              |
-| `IO`                              | Node-side read/write of a caller-supplied path failed                       | Pick a readable/writable path                      |
+| Code                              | Meaning                                                                        | What to do                                                                |
+| --------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------- |
+| `TIMEOUT`                         | AE never answered (retryable)                                                  | Retry; check AE is running and not showing a modal                        |
+| `TRANSPORT`                       | Spawn or filesystem failure on the Node side (retryable)                       | Check `AE_MCP_EXE`; retry                                                 |
+| `AE_NOT_FOUND`                    | `AfterFX.exe` could not be located                                             | Set `AE_MCP_EXE`                                                          |
+| `NO_INSTANCE`                     | No After Effects instance could take the call (the message lists what is live) | Name one (`AE_MCP_INSTANCE` / `instance`), install the agent, or start AE |
+| `INVALID_ARGS`                    | Arguments failed the operation's parameter schema                              | Fix the args (`details.issues` says how)                                  |
+| `UNKNOWN_OPERATION` / `_CATEGORY` | No such operation/category                                                     | `ae_catalog`; `details.suggestion` may name it                            |
+| `FORBIDDEN`                       | Blocked by the capability policy                                               | Stop — this is a deployment decision, not a bug                           |
+| `OPERATION_FAILED`                | The operation ran and reported failure (comp not found, index out of range)    | Fix the target and retry                                                  |
+| `JSX_THROW`                       | The generated ExtendScript threw inside AE                                     | Inspect `stack`                                                           |
+| `DISPATCHER`                      | dispatcher.jsx failed before running our code                                  | Check the mailbox and AE's scripting preference                           |
+| `VALIDATION`                      | A project JSON document failed schema validation                               | Fix the document; `dryRun` to inspect                                     |
+| `IO`                              | Node-side read/write of a caller-supplied path failed                          | Pick a readable/writable path                                             |
 
 ## How the code fits together
 
@@ -124,20 +140,26 @@ src/                         TypeScript MCP server
 ├── registry.ts              Operation registry + JSX generation helpers
 ├── opschema.ts              Argument validation derived from OperationParam[]
 ├── schema.ts / validate.ts  Project-JSON schema + validation
+├── cli.ts                   `install-agent` / `uninstall-agent` / `agent-status` / `instances` subcommands
+├── agent-install.ts         Writes the Startup-folder stub that loads jsx/agent.jsx
 ├── transport/
 │   ├── AeTransport.ts       Transport interface (execute → EvalResult)
-│   ├── launcher.ts          Per-platform dispatcher launch (AfterFX.exe -r / osascript)
-│   └── FileIpcTransport.ts  per-id mailbox / spawn / poll response-<id>.json
+│   ├── launcher.ts          Per-platform launch plans (AfterFX.exe -r / osascript; AfterFX.exe -m)
+│   ├── instances.ts         Heartbeat discovery + target resolution for the pull path
+│   └── FileIpcTransport.ts  per-id mailbox; push (spawn + poll) or pull (instance mailbox)
 ├── tools/
 │   ├── define-tool.ts       defineTool() + jsonResult()/toMcpResult() helpers
 │   ├── index.ts             ALL_TOOLS registration list
 │   └── *.ts                 one file per MCP tool (ae_*)
 └── operations/
     ├── index.ts             imports every operation module
+    ├── instance.ts          Node-side ops (Operation.run): instance.start / stop / list
     └── *.ts                 registerOp() calls grouped by area
 
 jsx/                         ExtendScript that runs inside After Effects
-├── dispatcher.jsx           Request/response loop, undo group, error capture
+├── dispatcher.jsx           Push entry (`-r` / DoScript): find the mailbox, serve one request
+├── agent.jsx                Pull entry (Scripts/Startup): resident poller for one instance's mailbox
+├── serve.jsx                Serve one request: consume, undo group, dialogs, write response (shared)
 ├── helpers.jsx              AE.* lookup helpers shared by generated code
 ├── toolkit.jsx              Higher-level building blocks (separated-dimension writes,
 │                            key specs, anchor moves, shape bounds/recolor, mask geometry)
@@ -276,7 +298,8 @@ Tests run under vitest (`npm test`). They are layered so `npm test` is always sa
 1. **Offline suites** — schema validation, fixtures, the JSX ES3 lint. No After Effects needed; these always run (including on CI, which has no AE).
 2. **E2E suites** — talk to a real After Effects through the full transport. They probe for AE first and **self-skip with a visible banner** when it isn't reachable, so a machine without AE gets a clean pass, not failures.
 3. **Session-mutating E2E** — tests that modify the open AE session (create/delete comps and layers, import/export). Opt in with `AE_MCP_E2E=1`. Don't run these while real work is open in AE.
-4. **Destructive E2E** — the kill/timeout tests that terminate AfterFX processes. Opt in with `AE_MCP_E2E_DESTRUCTIVE=1` and run them standalone, never alongside the other suites or a live AE session you care about.
+4. **Multi-instance E2E** — starts two `AfterFX.exe -m` through `instance.start`, works in both, merges, and quits them through `instance.stop`. Opt in with `AE_MCP_E2E_MULTI=1`; needs `install-agent` first. Windows only until the macOS launch plan is verified.
+5. **Destructive E2E** — the kill/timeout tests that terminate AfterFX processes. Opt in with `AE_MCP_E2E_DESTRUCTIVE=1` and run them standalone, never alongside the other suites or a live AE session you care about. Expect the next After Effects launch to stop at the Safe Mode dialog afterwards.
 
 Keep assertions focused on tool-observable behavior (the JSON a tool returns), not AE internals.
 
@@ -298,12 +321,14 @@ Every file under `fixtures/` is validated against the schema as part of the offl
 
 ## Environment variables
 
-| Variable                 | Effect                                                                                                             |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------ |
-| `AE_MCP_EXE`             | Path to AE — `AfterFX.exe` on Windows, the `.app` bundle on macOS (overrides the default probe). Legacy: `AE_EXE`. |
-| `AE_MCP_ENABLE_EVAL`     | Set to `1` to add `eval.run` (arbitrary ExtendScript) to the operation registry. Off by default.                   |
-| `AE_MCP_E2E`             | Set to `1` to enable session-mutating E2E tests.                                                                   |
-| `AE_MCP_E2E_DESTRUCTIVE` | Set to `1` to enable the destructive kill-test (run standalone).                                                   |
+| Variable                 | Effect                                                                                                                                                                          |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AE_MCP_EXE`             | Path to AE — `AfterFX.exe` on Windows, the `.app` bundle on macOS (overrides the default probe). Legacy: `AE_EXE`.                                                              |
+| `AE_MCP_ENABLE_EVAL`     | Set to `1` to add `eval.run` (arbitrary ExtendScript) to the operation registry. Off by default.                                                                                |
+| `AE_MCP_INSTANCE`        | Server side: the default After Effects instance (an id, or the open project's file name). AE side: the id an instance registers under, read from its own environment at launch. |
+| `AE_MCP_E2E`             | Set to `1` to enable session-mutating E2E tests.                                                                                                                                |
+| `AE_MCP_E2E_MULTI`       | Set to `1` to enable the multi-instance E2E (launches and quits two `AfterFX.exe -m`; needs the agent installed).                                                               |
+| `AE_MCP_E2E_DESTRUCTIVE` | Set to `1` to enable the destructive kill-test (run standalone).                                                                                                                |
 
 ## Commit / PR flow
 

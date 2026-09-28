@@ -30,6 +30,7 @@ import "./pref.js";
 import "./shape-contents.js";
 import "./layout.js";
 import "./sample.js";
+import "./instance.js";
 
 // eval.run executes arbitrary ExtendScript (file I/O, system.callSystem,
 // Socket, …). Opt-in: it enters the registry only when AE_MCP_ENABLE_EVAL=1

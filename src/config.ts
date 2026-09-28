@@ -296,3 +296,84 @@ export const RELAUNCH_UNCONSUMED_AFTER_MS = 2_500;
 
 /** Total dispatcher launches per call, first attempt included. */
 export const MAX_LAUNCH_ATTEMPTS = 3;
+
+// --- Instances: the pull path -------------------------------------------------
+//
+// Instances started with `AfterFX.exe -m` never receive `-r` scripts, so the
+// push path above cannot address them (verified on AE 26.3: `-r` reaches only
+// the one instance that registered as THE running AE, and with none
+// registered the launched AfterFX.exe boots a throwaway instance, runs the
+// script on an empty project, and quits). Each instance that runs the
+// resident agent (jsx/agent.jsx, loaded from its user-level Scripts/Startup
+// folder) owns a mailbox of its own, <runtime>/instances/<id>/, and announces
+// itself there with heartbeat.json. The server routes a call to one of them by
+// id (AE_MCP_INSTANCE) or by the project it has open, and falls back to push
+// only while no agent is live.
+
+export const INSTANCES_DIRNAME = "instances";
+export const INSTANCES_DIR = path.join(RUNTIME_DIR, INSTANCES_DIRNAME);
+export const HEARTBEAT_FILENAME = "heartbeat.json";
+
+export function instanceDirFor(id: string): string {
+  return path.join(INSTANCES_DIR, id);
+}
+
+/** The agent refreshes heartbeat.json every second; past this it is presumed gone. */
+export const HEARTBEAT_STALE_MS = 5_000;
+
+/**
+ * …unless the last heartbeat said `busy`. Scheduled ticks do not fire while a
+ * script runs, so a long request (the 10-minute project import) legitimately
+ * silences the heartbeat. Matches the longest built-in call timeout with room.
+ */
+export const HEARTBEAT_BUSY_STALE_MS = 15 * 60_000;
+
+/** An instance directory whose heartbeat is this old is swept at startup. */
+export const INSTANCE_DIR_SWEEP_MS = STALE_RUNTIME_FILE_MS;
+
+/** How often a pull call re-checks that its instance is alive while the request waits. */
+export const LIVENESS_CHECK_MS = 1_000;
+
+export const AGENT_JSX = path.join(PACKAGE_ROOT, "jsx", "agent.jsx");
+
+/** Name of the bootstrap stub `install-agent` drops into Scripts/Startup. */
+export const AGENT_STUB_FILENAME = "mcp-aftereffects-agent.jsx";
+
+export const INSTANCE_ID_MAX_LENGTH = 64;
+
+/**
+ * Instance ids become directory names under the mailbox. Keep them to
+ * [A-Za-z0-9._-] — jsx/agent.jsx applies the identical rule to what it reads
+ * from AE_MCP_INSTANCE, so both sides derive the same directory from the same
+ * value. Returns null when nothing usable is left.
+ */
+export function sanitizeInstanceId(raw: string | null | undefined): string | null {
+  if (raw === null || raw === undefined) return null;
+  let s = raw.trim();
+  if (s.length === 0) return null;
+  s = s.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[-.]+|[-.]+$/g, "");
+  if (s.length > INSTANCE_ID_MAX_LENGTH) s = s.slice(0, INSTANCE_ID_MAX_LENGTH);
+  return s.length > 0 ? s : null;
+}
+
+/**
+ * The instance this server addresses, as the user wrote it: an id, or the
+ * name of the project file an instance has open. Read at call time (not at
+ * import) so a test — or a client that restarts the server — sees the current
+ * value. Unset means "auto": pull when exactly one agent is live, push when
+ * none is.
+ */
+export function instanceTargetFromEnv(env: NodeJS.ProcessEnv = process.env): string | null {
+  const value = env.AE_MCP_INSTANCE?.trim();
+  return value ? value : null;
+}
+
+/**
+ * A `-r` launch whose AfterFX.exe child is still alive this long after
+ * spawning, with the request still unconsumed, is booting an instance of its
+ * own instead of forwarding to a running one (a forwarding child exits within
+ * a second). Left alone it would run the script on an empty project ~8s later
+ * and quit — reporting success for work that touched nothing. Generous enough
+ * for a cold-cache forwarder; the relaunch logic waits for it too.
+ */
+export const PHANTOM_LAUNCH_MS = 4_000;

@@ -5,6 +5,8 @@
 // The registry is the single source of truth for ae_catalog and ae_do.
 // Adding a new operation = adding one entry to this map.
 
+import type { AeTransport } from "./transport/AeTransport.js";
+
 export type ParamType = "string" | "number" | "boolean" | "array" | "object" | "any";
 
 export interface OperationParam {
@@ -69,6 +71,17 @@ export interface Operation {
   suppressDialogs?(args: Record<string, unknown>): boolean;
   /** Generate the JSX code body (function body, ends with `return ...;`). */
   toJsx(args: Record<string, unknown>): string;
+  /**
+   * Node-side implementation. When present, ae_do calls this instead of
+   * generating ExtendScript — for operations that manage After Effects from
+   * OUTSIDE it (starting and stopping instances, looking at which are live).
+   * Policy and argument validation apply exactly as for a JSX operation. The
+   * result follows the same convention: return `{ ok: false, error }` (plus
+   * optional `errorCode` / `hint`) for an expected failure. `toJsx` must still
+   * be provided; it should return a `jsxFail` saying the operation cannot ride
+   * inside batch.run, which only knows how to inline ExtendScript.
+   */
+  run?(args: Record<string, unknown>, transport: AeTransport): Promise<unknown>;
 }
 
 const operations = new Map<string, Operation>();
@@ -202,7 +215,10 @@ export const AMBIENT_CONTEXT_JSX = `
     var _ctx = {};
     try {
         var _ai = app.project.activeItem;
-        _ctx.project = { numItems: app.project.numItems, dirty: app.project.dirty, file: app.project.file ? app.project.file.fsName.replace(/\\\\/g,"/") : null };
+            _ctx.project = { numItems: app.project.numItems, dirty: app.project.dirty, file: app.project.file ? app.project.file.fsName.replace(/\\\\/g,"/") : null };
+        // Which After Effects instance answered (its resident agent's id), so
+        // a session driving several never has to guess where an edit landed.
+        try { _ctx.instance = $.global.AE_MCP_AGENT ? $.global.AE_MCP_AGENT.state.id : null; } catch (eInst) { _ctx.instance = null; }
         if (_ai && _ai instanceof CompItem) {
             _ctx.activeComp = { id: _ai.id, name: _ai.name, width: _ai.width, height: _ai.height, fps: _ai.frameRate, duration: _ai.duration, numLayers: _ai.numLayers };
             var _sel = [];

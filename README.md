@@ -61,7 +61,7 @@ Even for complex tasks, the AI can combine necessary operations while checking t
 - Node.js 24 or higher
 - MCP-compatible client (Claude Code, Claude Desktop, etc.)
 
-No plugins or panels need to be installed within After Effects.
+No plugins or panels need to be installed within After Effects for the usual setup: one After Effects at a time. Driving several instances at once (`AfterFX.exe -m`) is the one case that needs a small startup script — see [Multiple After Effects Instances](#multiple-after-effects-instances).
 
 ### After Effects Settings
 
@@ -83,7 +83,7 @@ and allow your MCP client or terminal to control After Effects.
 
 ## Quick Start
 
-No installation is required on the After Effects side.
+No installation is required on the After Effects side as long as you run one After Effects at a time.
 
 First, launch After Effects and open the project you wish to operate on.
 
@@ -152,6 +152,43 @@ Using `AE_MCP_ALLOW_CATEGORIES`, you can restrict the types of operations permit
 
 For example, you can limit permissions to only keyframe-related operations depending on your use case.
 
+### Multiple After Effects Instances
+
+After Effects can run several copies at once (`AfterFX.exe -m`), each with its own project. Out of the box the server reaches only the first, normally started copy: instances started with `-m` never receive the scripts it launches. To drive them, install the resident agent once:
+
+```bash
+npx @kumoproductions/mcp-aftereffects install-agent
+```
+
+This drops a small startup script into After Effects' user-level `Scripts/Startup` folder (no admin rights needed; run it again after an After Effects update). From the next launch on, every instance — including `-m` ones — serves a mailbox of its own, and the server picks which instance to talk to:
+
+- `AE_MCP_INSTANCE` in the server's `env` names the default instance for the whole session, either by the id the instance was started with or by the project file it has open (`"shotA"`, `"shotA.aep"`, or a full path when two projects share a name).
+- Every tool takes an optional `instance` argument to address another instance for a single call.
+- `ae_context` and `ae_do instance.list` show what is live.
+
+To name an instance at launch, set `AE_MCP_INSTANCE` in the environment that starts it:
+
+```bat
+set AE_MCP_INSTANCE=shotA
+"C:\Program Files\Adobe\Adobe After Effects 2026\Support Files\AfterFX.exe" -m
+```
+
+An unnamed instance gets a random id (`ae-…`) and can still be addressed by its project file. With exactly one live agent no configuration is needed at all; with several live and none named, calls fail with `NO_INSTANCE` instead of guessing.
+
+The agent keeps polling its mailbox for as long as After Effects runs, server or no server, so the mailbox directory under your per-user temp folder stays the trust boundary for the whole session. The mailbox location is fixed into the startup script when you install it; if you change `AE_MCP_RUNTIME_DIR`, run `install-agent` again (`agent-status` tells you when it is out of date).
+
+### Parallel Work with Worker Instances
+
+The AI can start instances itself. `instance.start` launches a new After Effects, waits for it to register, and can open a **copy** of a project — the safe way to work on something the main instance has open:
+
+1. `instance.start { name: "w1", copyFrom: "<main .aep>" }` — a worker with its own copy
+2. Work in it: any tool with `instance: "w1"`
+3. `ae_save_project` with `instance: "w1"`
+4. `project.merge { path: "<the copy>" }` in the main instance — the copy comes in as a folder; nothing already in the project is touched
+5. `instance.stop { name: "w1" }`
+
+Several workers can run at once. Each is a full After Effects, so plan on a few gigabytes of memory per instance.
+
 ## Execution of Arbitrary ExtendScript
 
 mcp-aftereffects includes an advanced feature to execute arbitrary ExtendScript for processes that cannot be handled by standard operations.
@@ -192,6 +229,14 @@ Please check the following:
 - Is a project open?
 - Is "Allow Scripts to Write Files and Access Network" turned ON?
 - On macOS, is the Automation permission enabled?
+
+### `NO_INSTANCE`
+
+The call had no After Effects to go to. Either every running After Effects was started with `-m` and the agent is not installed (see [Multiple After Effects Instances](#multiple-after-effects-instances)), the instance named by `AE_MCP_INSTANCE` / `instance` is not running or is stuck in a dialog, or several agents are live and none was named. The error lists what is live.
+
+### After Effects Stops at a "We detected a crash" Dialog
+
+If an After Effects process was killed (Task Manager, `taskkill`, a crash), the next launch shows the Safe Mode dialog and waits for a click — including instances started by `instance.start`, which then fail with `did not register`. Dismiss the dialog on screen. An instance that quits normally does not trigger it, so prefer `instance.stop` over killing.
 
 ### After Effects Not Found
 

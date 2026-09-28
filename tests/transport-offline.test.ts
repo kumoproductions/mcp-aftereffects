@@ -2,6 +2,12 @@
 // timeout path, and the spawn-failure path. AfterFX.exe is replaced with a
 // stand-in that can never answer, so these run identically on a machine
 // without AE installed.
+//
+// Every transport here is built with `instance: null`: these are PUSH-path
+// tests, and with nothing pinned the transport would route to a live agent
+// if the developer's own After Effects happens to be running one (auto mode
+// pulls to the single live instance) — see tests/transport-pull.test.ts for
+// that path.
 
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
@@ -106,7 +112,7 @@ describe("timeout", () => {
 
   beforeEach(() => {
     process.env.AE_MCP_EXE = INERT_EXE;
-    transport = new FileIpcTransport();
+    transport = new FileIpcTransport({ instance: null });
   });
 
   it("returns TIMEOUT and reclaims the unconsumed request", async () => {
@@ -157,7 +163,7 @@ describe("busy lock", () => {
     await fs.writeFile(BUSY_LOCK_PATH, JSON.stringify({ pid: 0, id: "foreign" }), "utf8");
     const before = await mailboxEntries(REQUEST_PREFIX);
 
-    const transport = new FileIpcTransport();
+    const transport = new FileIpcTransport({ instance: null });
     const res = await transport.execute({
       code: "return 1;",
       label: "offline_busy",
@@ -177,7 +183,7 @@ describe("busy lock", () => {
     const expired = new Date(Date.now() - BUSY_LOCK_STALE_MS - 60_000);
     await fs.utimes(BUSY_LOCK_PATH, expired, expired);
 
-    const transport = new FileIpcTransport();
+    const transport = new FileIpcTransport({ instance: null });
     const res = await transport.execute({
       code: "return 1;",
       label: "offline_stale_lock",
@@ -198,7 +204,7 @@ describe("busy lock", () => {
     // and retaken by a waiter. Releasing must not delete the successor's lock,
     // or a third caller gets a dispatch slot while the second is still driving
     // AE: the collision the lock exists to prevent.
-    const transport = new FileIpcTransport();
+    const transport = new FileIpcTransport({ instance: null });
     const call = transport.execute({
       code: "return 1;",
       label: "offline_lock_stolen",
@@ -219,7 +225,7 @@ describe("busy lock", () => {
     // AE refusing our script (its "second script" warning) leaves the request
     // file unconsumed — the transport must try again rather than wait out the
     // whole timeout on a launch that already died.
-    const transport = new FileIpcTransport();
+    const transport = new FileIpcTransport({ instance: null });
     const res = await transport.execute({
       code: "return 1;",
       label: "offline_relaunch",
@@ -239,7 +245,7 @@ describe("undo group flag", () => {
   it("travels to the dispatcher as an explicit field", async () => {
     // undo/redo must reach AE with no group open (see tests/undo-group.test.ts).
     // The flag is only worth anything if it survives serialization.
-    const transport = new FileIpcTransport();
+    const transport = new FileIpcTransport({ instance: null });
     const call = transport.execute({
       code: "return 1;",
       label: "offline_undo_off",
@@ -255,7 +261,7 @@ describe("undo group flag", () => {
   it("is sent as true when the caller says nothing", async () => {
     // Explicit rather than omitted: "group this" must not ride on a key that
     // survives the trip.
-    const transport = new FileIpcTransport();
+    const transport = new FileIpcTransport({ instance: null });
     const call = transport.execute({
       code: "return 1;",
       label: "offline_undo_default",
@@ -275,7 +281,7 @@ describe("spawn failure", () => {
     await fs.writeFile(notAnExe, "not a program", "utf8");
     process.env.AE_MCP_EXE = notAnExe;
 
-    const transport = new FileIpcTransport();
+    const transport = new FileIpcTransport({ instance: null });
     const before = await mailboxEntries(REQUEST_PREFIX);
     const started = Date.now();
     const res = await transport.execute({

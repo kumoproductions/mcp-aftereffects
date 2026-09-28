@@ -6,6 +6,7 @@
 // this interface.
 
 import type { AeErrorCode } from "../errors.js";
+import type { TargetResolution } from "./instances.js";
 
 export interface EvalRequest {
   /** JSX code to execute inside the dispatcher. Convention: `return <JSON-serializable value>;` */
@@ -39,6 +40,13 @@ export interface EvalRequest {
   suppressDialogs?: boolean;
   /** Per-call timeout in milliseconds. */
   timeoutMs?: number;
+  /**
+   * Address a specific After Effects instance for this call — an instance id
+   * (its AE_MCP_INSTANCE at launch) or the name of the project file it has
+   * open — overriding the transport's default target. Only the pull path can
+   * honour it; a transport with a single fixed destination ignores it.
+   */
+  instance?: string;
 }
 
 export interface EvalResult {
@@ -74,4 +82,11 @@ export interface AeTransport {
   execute(req: EvalRequest): Promise<EvalResult>;
   /** Optional hook to release resources (e.g. shut down a socket daemon). */
   close?(): Promise<void>;
+  /**
+   * Which After Effects instance the next call would go to, and how (push
+   * via launch, or pull via a resident agent). Informational — for
+   * `ae_context` and the startup banner; a transport with a single fixed
+   * destination may omit it.
+   */
+  describeTarget?(): Promise<TargetResolution>;
 }

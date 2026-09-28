@@ -947,3 +947,68 @@ registerOp({
         `;
   },
 });
+
+registerOp({
+  name: "project.merge",
+  category: "project",
+  description:
+    "Import another .aep into the current project as a folder (After Effects' own project import): every " +
+    "comp, footage item and folder of `path` lands under one new folder with names preserved, and nothing " +
+    "already in the project is touched. This is how work done in another instance comes back — save there, " +
+    "merge here, then move or swap comps as needed (project.delete_item / item ops). Returns the folder and " +
+    "the comps and items it now holds.",
+  params: [
+    {
+      name: "path",
+      type: "string",
+      description: "Absolute .aep path (saved by the other instance)",
+      required: true,
+    },
+    {
+      name: "folderName",
+      type: "string",
+      description: "Rename the imported folder (default: the .aep's file name)",
+      required: false,
+    },
+    {
+      name: "parentFolder",
+      type: "any",
+      description: "Folder (id or name) to put the imported folder into (default: project root)",
+      required: false,
+    },
+  ],
+  toJsx(args) {
+    return `
+            var _f = new File(${jsxVal(args.path)});
+            if (!_f.exists) return { ok: false, error: "file not found: " + ${jsxVal(args.path)} };
+            var _before = {};
+            for (var _bi = 1; _bi <= app.project.numItems; _bi++) _before[app.project.item(_bi).id] = true;
+            var _imported = app.project.importFile(new ImportOptions(_f));
+            // The import returns the new top-level folder; find it by the item
+            // diff regardless, so a build that returns something else still
+            // reports the right folder.
+            var _folder = (_imported && _imported instanceof FolderItem) ? _imported : null;
+            var _items = [];
+            var _comps = [];
+            for (var _ai = 1; _ai <= app.project.numItems; _ai++) {
+                var _it = app.project.item(_ai);
+                if (_before[_it.id]) continue;
+                if (_folder === null && _it instanceof FolderItem && _it.parentFolder === app.project.rootFolder) _folder = _it;
+                _items.push({ id: _it.id, name: _it.name, type: AE.itemTypeName(_it) });
+                if (_it instanceof CompItem) {
+                    _comps.push({ id: _it.id, name: _it.name, width: _it.width, height: _it.height, duration: _it.duration, fps: _it.frameRate });
+                }
+            }
+            if (_folder === null) return { ok: false, error: "import created no folder (" + _items.length + " new items)", items: _items };
+            var _newName = ${jsxVal(args.folderName ?? null)};
+            if (_newName) _folder.name = _newName;
+            var _parentArg = ${jsxVal(args.parentFolder ?? null)};
+            if (_parentArg !== null) {
+                var _pf = AE.findFolder(_parentArg);
+                if (!_pf) return { ok: false, error: "no folder matching " + _parentArg, folder: { id: _folder.id, name: _folder.name } };
+                _folder.parentFolder = _pf;
+            }
+            return { ok: true, folder: { id: _folder.id, name: _folder.name }, comps: _comps, items: _items };
+        `;
+  },
+});

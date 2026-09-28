@@ -1,8 +1,12 @@
+import { instanceLabel, listInstances } from "../transport/instances.js";
 import { defineTool, toMcpResult } from "./define-tool.js";
 
 const CODE = `
     var proj = app.project;
     var ai = proj.activeItem;
+    // The resident agent (pull path) marks the instance that answered; null
+    // means this call came in through the push path (AfterFX.exe -r).
+    var agent = AE.safeGet(function () { return $.global.AE_MCP_AGENT || null; }, null);
     var ctx = {
         project: {
             file: proj.file ? proj.file.fsName.replace(/\\\\/g, "/") : null,
@@ -10,6 +14,11 @@ const CODE = `
             numItems: proj.numItems,
             bitsPerChannel: proj.bitsPerChannel
         },
+        instance: agent ? {
+            id: agent.state.id,
+            idSource: agent.state.idSource,
+            served: agent.state.served
+        } : null,
         activeComp: null,
         selectedLayers: [],
         helpers: [
@@ -70,7 +79,8 @@ const CODE = `
             "Position separated into X/Y (Separate Dimensions, or layers from 'Create Shapes from Vector Layer'): every write op and AE.writeValue route to the followers automatically",
             "imported Illustrator layers: layer.convert_to_shapes (strips ' Outlines', can remove the source layer/footage); then shape.group_bounds / layer.split_groups to work per part",
             "layer targets accept arrays everywhere they accept 'all' — [\\"A\\", \\"B\\", { id: 12 }] is one call",
-            "verifying motion: ae_render_frame times + contactSheet tiles the frames into one labelled PNG; analyze reports edge bands / content bounds; comp.sample reads values at several times"
+            "verifying motion: ae_render_frame times + contactSheet tiles the frames into one labelled PNG; analyze reports edge bands / content bounds; comp.sample reads values at several times",
+            "several After Effects instances (AfterFX.exe -m): each MCP server addresses ONE, chosen by AE_MCP_INSTANCE (instance id or open project file name); the response's instances[] lists what is live — if the project you need is open elsewhere, say so instead of editing the wrong one"
         ],
         undoContract: [
             "every ae_do / eval.run call is auto-wrapped in ONE undo group",
@@ -127,6 +137,38 @@ export const contextTool = defineTool({
   inputShape: {},
   handler: async (_args, transport) => {
     const result = await transport.execute({ code: CODE, label: "context" });
-    return toMcpResult(result);
+    if (!result.ok) return toMcpResult(result);
+    // Node-side view of the instance landscape: which AE instances have a
+    // live agent, and how THIS server reaches its one. The JSX above can only
+    // describe the instance that answered.
+    const [instances, target] = await Promise.all([
+      listInstances(),
+      transport.describeTarget ? transport.describeTarget() : Promise.resolve(null),
+    ]);
+    const base =
+      result.result !== null && typeof result.result === "object" && !Array.isArray(result.result)
+        ? (result.result as Record<string, unknown>)
+        : { value: result.result };
+    const merged = {
+      ...base,
+      transport:
+        target === null
+          ? null
+          : target.mode === "pull"
+            ? { mode: "pull", instance: target.instance.id }
+            : target.mode === "push"
+              ? { mode: "push" }
+              : { mode: "error", message: target.message },
+      instances: instances.map((i) => ({
+        label: instanceLabel(i),
+        id: i.id,
+        alive: i.alive,
+        busy: i.heartbeat?.busy ?? false,
+        project: i.heartbeat?.project ?? null,
+        aeVersion: i.heartbeat?.aeVersion ?? null,
+        lastSeenMsAgo: i.ageMs,
+      })),
+    };
+    return toMcpResult({ ...result, result: merged });
   },
 });

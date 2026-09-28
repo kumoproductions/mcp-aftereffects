@@ -3,7 +3,8 @@ import { createRequire } from "node:module";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
-import { RUNTIME_DIR } from "./config.js";
+import { runCli } from "./cli.js";
+import { RUNTIME_DIR, instanceTargetFromEnv } from "./config.js";
 import { errorResult } from "./errors.js";
 import { denyTool, policySummary, readOnlyMode } from "./policy.js";
 import { FileIpcTransport } from "./transport/FileIpcTransport.js";
@@ -77,9 +78,32 @@ for (const tool of ALL_TOOLS) {
   register(tool);
 }
 
+/** One line on where calls will go, so a misrouted session is visible in the client's server log. */
+async function instanceBanner(): Promise<string> {
+  const named = instanceTargetFromEnv();
+  const target = await transport.describeTarget();
+  switch (target.mode) {
+    case "pull":
+      return `instance: ${target.instance.id} (resident agent${named ? `, AE_MCP_INSTANCE=${named}` : ", the only live one"})`;
+    case "push":
+      return "instance: none registered yet — calls launch AfterFX.exe -r into the running After Effects (instances started with -m need the agent: `mcp-aftereffects install-agent`)";
+    case "error":
+      return `instance: UNRESOLVED — ${target.message}`;
+  }
+}
+
 async function main(): Promise<void> {
+  // With arguments the binary is a maintenance CLI (install-agent, instances,
+  // …), not a server. MCP clients never pass any.
+  const argv = process.argv.slice(2);
+  if (argv.length > 0) {
+    process.exitCode = await runCli(argv);
+    return;
+  }
+
   console.error(`[mcp-aftereffects] policy: ${policySummary()}`);
   console.error(`[mcp-aftereffects] mailbox: ${RUNTIME_DIR}`);
+  console.error(`[mcp-aftereffects] ${await instanceBanner()}`);
   if (readOnlyMode()) {
     console.error(
       `[mcp-aftereffects] read-only mode — ${skipped.length > 0 ? `tools withheld: ${skipped.join(", ")}; ` : ""}` +

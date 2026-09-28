@@ -1,14 +1,17 @@
-import { spawn } from "node:child_process";
+import { spawn as nodeSpawn } from "node:child_process";
 import { mkdirSync, promises as fs, unlinkSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import * as path from "node:path";
+import type { Readable } from "node:stream";
 
 import {
   BUSY_LOCK_PATH,
   BUSY_LOCK_REFRESH_MS,
   BUSY_LOCK_STALE_MS,
   DEFAULT_TIMEOUT_MS,
+  LIVENESS_CHECK_MS,
   MAX_LAUNCH_ATTEMPTS,
+  PHANTOM_LAUNCH_MS,
   POLL_INTERVAL_MS,
   RELAUNCH_UNCONSUMED_AFTER_MS,
   REQUEST_PREFIX,
@@ -19,6 +22,7 @@ import {
   RUNTIME_POINTER_PATH,
   RUNTIME_ROOT,
   STALE_RUNTIME_FILE_MS,
+  instanceTargetFromEnv,
   requestPathFor,
   resolveAfterFxPath,
   responsePathFor,
@@ -26,10 +30,68 @@ import {
 } from "../config.js";
 import type { AeErrorCode } from "../errors.js";
 import type { AeTransport, EvalRequest, EvalResult } from "./AeTransport.js";
-import { buildLaunchPlan } from "./launcher.js";
+import {
+  type InstanceInfo,
+  type TargetResolution,
+  describeInstance,
+  readInstance,
+  resolveTarget,
+  sweepDeadInstanceDirs,
+} from "./instances.js";
+import { type LaunchPlan, buildLaunchPlan } from "./launcher.js";
+
+/**
+ * The slice of ChildProcess the transport uses. Injectable (see
+ * FileIpcTransportOptions.spawn) so a test can stand in a launcher child that
+ * never exits — the signature of AE booting a throwaway instance — without an
+ * executable that behaves that way on every platform.
+ */
+export interface LaunchedProcess {
+  pid?: number;
+  on(event: "exit", listener: (code: number | null) => void): unknown;
+  on(event: "error", listener: (err: Error) => void): unknown;
+  kill(): unknown;
+  unref?(): void;
+  stderr?: Readable | null;
+}
+
+export interface LaunchSpawnOptions {
+  stdio: "ignore" | ["ignore", "ignore", "pipe"];
+  windowsHide: boolean;
+  detached: boolean;
+}
+
+export type SpawnFn = (
+  command: string,
+  args: string[],
+  options: LaunchSpawnOptions,
+) => LaunchedProcess;
+
+export interface FileIpcTransportOptions {
+  /**
+   * Which After Effects instance to address. A string is what AE_MCP_INSTANCE
+   * would hold (an instance id, or the name of the project file an instance
+   * has open); `null` forces the legacy push path regardless of live agents;
+   * undefined (the default) reads AE_MCP_INSTANCE at call time.
+   */
+  instance?: string | null;
+  /** Process launcher; defaults to child_process.spawn. */
+  spawn?: SpawnFn;
+}
 
 interface SpawnState {
   error: Error | null;
+  child: LaunchedProcess | null;
+  exited: boolean;
+}
+
+interface MailboxRequest {
+  id: string;
+  label: string;
+  code: string;
+  payload: unknown;
+  undoGroup: boolean;
+  suppressDialogs: boolean;
 }
 
 interface DispatcherResponse {
@@ -52,9 +114,21 @@ interface DispatcherResponse {
 }
 
 /**
- * File-IPC transport: for each call, write `request-<id>.json`, launch the
+ * File-IPC transport. Two ways to reach After Effects, chosen per call by
+ * `resolveTarget` (see transport/instances.ts):
+ *
+ * PUSH — write `request-<id>.json` into the shared mailbox, launch the
  * dispatcher inside AE (`AfterFX.exe -r` on Windows, `osascript`/DoScript on
- * macOS — see launcher.ts), then poll `response-<id>.json`.
+ * macOS — see launcher.ts), poll `response-<id>.json`. Reaches the one
+ * instance registered as THE running AE; instances started with `-m` are
+ * invisible to it.
+ *
+ * PULL — write the request into `<mailbox>/instances/<id>/`, where the
+ * resident agent (jsx/agent.jsx, loaded from that instance's Startup folder)
+ * polls every 250 ms, and poll the response next to it. Nothing is spawned,
+ * so nothing can collide with a script AE is already running. Used whenever
+ * the instance named by AE_MCP_INSTANCE has a live heartbeat, or exactly one
+ * agent is live and nothing was named.
  *
  * Mailbox: every request/response is its own file in a machine-wide directory
  * under the OS temp dir (see config.ts). That is what makes concurrent MCP
@@ -67,17 +141,22 @@ interface DispatcherResponse {
  * chain. AE executes JSX single-threaded, so overlapping our own calls would
  * only queue inside AE with less visibility.
  *
- * After Effects is resolved lazily on the first call (not in the constructor)
+ * After Effects is resolved lazily on the first push (not in the constructor)
  * so the MCP server can start — and list its tools — on a machine where AE
  * isn't installed yet; the helpful "set AE_MCP_EXE" error surfaces per call.
+ * Pull never needs the executable at all.
  */
 export class FileIpcTransport implements AeTransport {
   private afterFxPath: string | null = null;
   private inflight: Promise<unknown> = Promise.resolve();
   /** Non-null when the mailbox directory is unusable; reported per call. */
   private readonly setupError: string | null = null;
+  private readonly instanceOption: string | null | undefined;
+  private readonly spawnFn: SpawnFn;
 
-  constructor() {
+  constructor(options: FileIpcTransportOptions = {}) {
+    this.instanceOption = options.instance;
+    this.spawnFn = options.spawn ?? ((command, args, opts) => nodeSpawn(command, args, opts));
     try {
       // 0o700: write access to the mailbox is code execution inside AE (see
       // RUNTIME_DIR_MODE). recursive:true applies the mode to what it creates;
@@ -85,14 +164,15 @@ export class FileIpcTransport implements AeTransport {
       // runtimeDirWarnings reports on below.
       mkdirSync(RUNTIME_DIR, { recursive: true, mode: RUNTIME_DIR_MODE });
       if (RUNTIME_DIR_IS_CUSTOM) {
-        // dispatcher.jsx derives the default mailbox path itself; when
-        // AE_MCP_RUNTIME_DIR moves it, this pointer is how the JSX side finds
-        // it. Written at the fixed default location, which is always writable.
+        // dispatcher.jsx and agent.jsx derive the default mailbox path
+        // themselves; when AE_MCP_RUNTIME_DIR moves it, this pointer is how
+        // the JSX side finds it. Written at the fixed default location, which
+        // is always writable.
         mkdirSync(RUNTIME_ROOT, { recursive: true, mode: RUNTIME_DIR_MODE });
         writeFileSync(RUNTIME_POINTER_PATH, RUNTIME_DIR, "utf8");
       } else {
         // Back on the default: clear any pointer a previous custom-dir run
-        // left behind, or the dispatcher would keep looking somewhere we no
+        // left behind, or the JSX side would keep looking somewhere we no
         // longer write to.
         try {
           unlinkSync(RUNTIME_POINTER_PATH);
@@ -101,7 +181,7 @@ export class FileIpcTransport implements AeTransport {
         }
       }
       // Reported after both directories exist: the pointer directory is part of
-      // the same trust boundary (dispatcher.jsx follows runtime-dir.txt before
+      // the same trust boundary (the JSX side follows runtime-dir.txt before
       // looking at the default mailbox) and can only be checked once it's there.
       for (const warning of runtimeDirWarnings()) {
         process.stderr.write(`mcp-aftereffects: WARNING — ${warning}\n`);
@@ -112,6 +192,25 @@ export class FileIpcTransport implements AeTransport {
       this.setupError = `cannot use runtime directory ${RUNTIME_DIR}: ${err instanceof Error ? err.message : String(err)}`;
     }
     void this.sweepStaleFiles();
+  }
+
+  /** Where the next call would go. For ae_context and the startup banner; never throws. */
+  async describeTarget(instance?: string): Promise<TargetResolution> {
+    return this.resolveTarget(instance);
+  }
+
+  /**
+   * A per-call `instance` wins over the constructor option, which wins over
+   * AE_MCP_INSTANCE; `instance: null` at construction forces push unless a
+   * call names an instance explicitly.
+   */
+  private async resolveTarget(explicit?: string): Promise<TargetResolution> {
+    const named = explicit?.trim();
+    if (named) return resolveTarget(named);
+    if (this.instanceOption === null) return { mode: "push" };
+    const target =
+      this.instanceOption === undefined ? instanceTargetFromEnv() : this.instanceOption;
+    return resolveTarget(target);
   }
 
   async execute(req: EvalRequest): Promise<EvalResult> {
@@ -147,6 +246,111 @@ export class FileIpcTransport implements AeTransport {
       });
     }
 
+    const target = await this.resolveTarget(req.instance);
+    if (target.mode === "error") {
+      return failure("NO_INSTANCE", target.message, {
+        durationMs: Date.now() - started,
+        hint: target.hint,
+      });
+    }
+
+    const request: MailboxRequest = {
+      id: randomUUID(),
+      label: req.label ?? "action",
+      code: req.code,
+      payload: req.payload ?? null,
+      // Sent explicitly rather than by omission: the JSX side defaults a
+      // missing field to true, and "group this" must not depend on a key
+      // surviving the trip.
+      undoGroup: req.undoGroup !== false,
+      suppressDialogs: req.suppressDialogs !== false,
+    };
+
+    if (target.mode === "pull") {
+      return this.executePull(request, target.instance, started, timeoutMs);
+    }
+    return this.executePush(request, started, timeoutMs);
+  }
+
+  // --- Pull: the instance's agent serves its own mailbox ---------------------
+
+  private async executePull(
+    request: MailboxRequest,
+    instance: InstanceInfo,
+    started: number,
+    timeoutMs: number,
+  ): Promise<EvalResult> {
+    const dir = instance.dir;
+    const requestPath = path.join(dir, `${REQUEST_PREFIX}${request.id}.json`);
+    const responsePath = path.join(dir, `${RESPONSE_PREFIX}${request.id}.json`);
+    await fs.mkdir(dir, { recursive: true });
+    await this.writeRequest(dir, requestPath, request);
+
+    // No busy lock and no launch: the agent dequeues one request per tick, so
+    // two server processes aimed at the same instance simply queue in its
+    // directory, and the "second script" refusal that the lock guards against
+    // on the push path cannot happen here.
+    const deadline = started + timeoutMs;
+    let requestConsumed = false;
+    let lastLivenessAt = started;
+    while (Date.now() < deadline) {
+      const parsed = await this.tryReadResponse(responsePath);
+      if (parsed) {
+        await this.safeUnlink(responsePath);
+        return this.toEvalResult(parsed, Date.now() - started);
+      }
+      const now = Date.now();
+      if (!requestConsumed && now - lastLivenessAt >= LIVENESS_CHECK_MS) {
+        lastLivenessAt = now;
+        if (!(await this.fileExists(requestPath))) {
+          requestConsumed = true;
+        } else {
+          // Still waiting to be picked up: is anyone there to pick it up? A
+          // heartbeat that stopped (and did not say `busy`) means AE quit,
+          // crashed, or is stuck in a modal — fail now, not at the deadline.
+          const current = await readInstance(dir, now);
+          if (!current.alive) {
+            await this.safeUnlink(requestPath);
+            return failure(
+              "NO_INSTANCE",
+              `After Effects instance '${instance.id}' stopped responding (${describeInstance(current)}); ` +
+                "the request was never picked up and has been discarded",
+              {
+                durationMs: Date.now() - started,
+                hint:
+                  "Is that After Effects still running, and free of modal dialogs? Scripts do not run while one is open. " +
+                  "If it was restarted, the agent re-registers about ten seconds after launch — retry then.",
+              },
+            );
+          }
+        }
+      }
+      await sleep(POLL_INTERVAL_MS);
+    }
+
+    const reclaimed = await this.safeUnlink(requestPath);
+    return failure(
+      "TIMEOUT",
+      `timeout after ${timeoutMs}ms waiting for After Effects instance '${instance.id}' to respond` +
+        (reclaimed
+          ? " (the request was never picked up and has been discarded)"
+          : " (the request WAS picked up by the instance; the operation may still be running)"),
+      {
+        durationMs: Date.now() - started,
+        hint:
+          "Is After Effects showing a modal dialog, or rendering/previewing? Scripts wait for both. " +
+          "For a long operation, raise timeoutMs.",
+      },
+    );
+  }
+
+  // --- Push: launch the dispatcher into the registered instance ---------------
+
+  private async executePush(
+    request: MailboxRequest,
+    started: number,
+    timeoutMs: number,
+  ): Promise<EvalResult> {
     try {
       this.afterFxPath ??= resolveAfterFxPath();
     } catch (err) {
@@ -155,27 +359,12 @@ export class FileIpcTransport implements AeTransport {
       });
     }
 
-    const id = randomUUID();
+    const id = request.id;
     const requestPath = requestPathFor(id);
     const responsePath = responsePathFor(id);
 
-    const request = {
-      id,
-      label: req.label ?? "action",
-      code: req.code,
-      payload: req.payload ?? null,
-      // Sent explicitly rather than by omission: the dispatcher defaults a
-      // missing field to true, and "group this" must not depend on a key
-      // surviving the trip.
-      undoGroup: req.undoGroup !== false,
-      suppressDialogs: req.suppressDialogs !== false,
-    };
-
-    // 1. Write the request atomically (tmp + rename). The tmp name is dotted so
-    // it can never match the dispatcher's `request-*.json` glob mid-write.
-    const tmpRequestPath = path.join(RUNTIME_DIR, `.${REQUEST_PREFIX}${id}.json.tmp`);
-    await fs.writeFile(tmpRequestPath, serializeRequest(request), "utf8");
-    await fs.rename(tmpRequestPath, requestPath);
+    // 1. Write the request atomically (tmp + rename).
+    await this.writeRequest(RUNTIME_DIR, requestPath, request);
 
     // 2. Acquire the cross-process busy lock. AE refuses a script delivered
     // while another script runs — with a modal warning that halts all
@@ -207,17 +396,22 @@ export class FileIpcTransport implements AeTransport {
       // The command returns immediately on Windows; on macOS osascript blocks
       // for the DoScript duration — either way the actual work happens inside
       // AE and we learn the outcome from the response file, not the child.
-      const spawnState: SpawnState = { error: null };
-      this.launchDispatcher(spawnState);
+      const spawnState: SpawnState = { error: null, child: null, exited: false };
+      const launch = this.launchDispatcher(spawnState);
       if (spawnState.error !== null) {
         return await this.spawnFailure(spawnState.error, requestPath, started);
       }
 
       // 4. Poll for OUR response file. While polling: keep the busy lock
-      // fresh, and relaunch the dispatcher if the request is still sitting
-      // unconsumed — that is the signature of AE having refused the script
-      // (its "second script" warning) because something we cannot see (a user
-      // panel, a startup script) was running when ours arrived.
+      // fresh, and watch what became of the launch while the request sits
+      // unconsumed. Two things can be wrong there:
+      //   - AE refused the script (its "second script" warning) because
+      //     something we cannot see was running when ours arrived — the
+      //     launcher child exited normally, so launch again;
+      //   - the launcher child is still alive: nothing was registered to
+      //     receive the hand-off, and it is booting an instance of its own
+      //     that would run the request on an empty project ~8s from now.
+      //     Kill it and say so; relaunching would only boot a second one.
       let attempts = 1;
       let lastLaunchAt = started;
       let lastRefreshAt = started;
@@ -236,17 +430,22 @@ export class FileIpcTransport implements AeTransport {
           lastRefreshAt = now;
           await this.refreshBusyLock(id);
         }
-        if (
-          !requestConsumed &&
-          attempts < MAX_LAUNCH_ATTEMPTS &&
-          now - lastLaunchAt >= RELAUNCH_UNCONSUMED_AFTER_MS * attempts
-        ) {
-          if (await this.fileExists(requestPath)) {
+        if (!requestConsumed && now - lastLaunchAt >= RELAUNCH_UNCONSUMED_AFTER_MS) {
+          if (!(await this.fileExists(requestPath))) {
+            requestConsumed = true;
+          } else if (launch.detectPhantom && spawnState.child !== null && !spawnState.exited) {
+            if (now - lastLaunchAt >= PHANTOM_LAUNCH_MS) {
+              return await this.phantomFailure(spawnState, requestPath, started);
+            }
+            // A forwarder that is merely slow exits shortly; give it until
+            // PHANTOM_LAUNCH_MS before deciding.
+          } else if (
+            attempts < MAX_LAUNCH_ATTEMPTS &&
+            now - lastLaunchAt >= RELAUNCH_UNCONSUMED_AFTER_MS * attempts
+          ) {
             attempts++;
             lastLaunchAt = now;
             this.launchDispatcher(spawnState);
-          } else {
-            requestConsumed = true;
           }
         }
         await sleep(POLL_INTERVAL_MS);
@@ -281,6 +480,20 @@ export class FileIpcTransport implements AeTransport {
   }
 
   /**
+   * Write a request atomically (tmp + rename). The tmp name is dotted so it
+   * can never match the JSX side's `request-*.json` glob mid-write.
+   */
+  private async writeRequest(
+    dir: string,
+    requestPath: string,
+    request: MailboxRequest,
+  ): Promise<void> {
+    const tmpRequestPath = path.join(dir, `.${REQUEST_PREFIX}${request.id}.json.tmp`);
+    await fs.writeFile(tmpRequestPath, serializeRequest(request), "utf8");
+    await fs.rename(tmpRequestPath, requestPath);
+  }
+
+  /**
    * Spawn the dispatcher launch command. Errors land in `state.error` rather
    * than throwing: a spawn failure (ENOENT, EACCES, EFTYPE, …) can never
    * produce a response, so the poll loop checks the state every tick instead
@@ -288,14 +501,17 @@ export class FileIpcTransport implements AeTransport {
    * meaningful (osascript), a non-zero exit is treated the same way — that is
    * how a denied macOS Automation permission (-1743) surfaces in seconds.
    */
-  private launchDispatcher(state: SpawnState): void {
+  private launchDispatcher(state: SpawnState): LaunchPlan {
     const launch = buildLaunchPlan(this.afterFxPath as string);
+    state.child = null;
+    state.exited = false;
     try {
-      const child = spawn(launch.command, launch.args, {
+      const child = this.spawnFn(launch.command, launch.args, {
         stdio: launch.diagnoseExit ? ["ignore", "ignore", "pipe"] : "ignore",
         windowsHide: true,
         detached: false,
       });
+      state.child = child;
       // We don't wait for the child; AE may keep it short- or long-lived
       // depending on whether a new instance was started. Just make sure we
       // don't leak a handle that blocks node exit.
@@ -303,24 +519,59 @@ export class FileIpcTransport implements AeTransport {
       child.on("error", (err) => {
         state.error = err;
       });
+      let stderr = "";
       if (launch.diagnoseExit) {
-        let stderr = "";
         child.stderr?.setEncoding("utf8");
         child.stderr?.on("data", (chunk: string) => {
           if (stderr.length < 4096) stderr += chunk;
         });
-        child.on("exit", (code) => {
-          if (code !== null && code !== 0 && state.error === null) {
-            const detail = stderr.trim();
-            state.error = new Error(
-              `${launch.command} exited with code ${code}${detail ? `: ${detail}` : ""}`,
-            );
-          }
-        });
       }
+      child.on("exit", (code) => {
+        state.exited = true;
+        if (launch.diagnoseExit && code !== null && code !== 0 && state.error === null) {
+          const detail = stderr.trim();
+          state.error = new Error(
+            `${launch.command} exited with code ${code}${detail ? `: ${detail}` : ""}`,
+          );
+        }
+      });
     } catch (err) {
       state.error = err instanceof Error ? err : new Error(String(err));
     }
+    return launch;
+  }
+
+  /**
+   * The launcher child outlived a forwarder with our request untouched: it is
+   * AfterFX.exe becoming an instance, not delivering to one. Stop it before
+   * it can run the request on an empty project, take the request back, and
+   * explain — this is the one failure whose "success" would have been a lie.
+   */
+  private async phantomFailure(
+    state: SpawnState,
+    requestPath: string,
+    started: number,
+  ): Promise<EvalResult> {
+    try {
+      state.child?.kill();
+    } catch {
+      /* already gone */
+    }
+    await this.safeUnlink(requestPath);
+    return failure(
+      "NO_INSTANCE",
+      "no running After Effects instance received the script: the launched AfterFX.exe started booting an " +
+        "instance of its own. That happens when no After Effects is running, or when every running one was " +
+        "started with `AfterFX.exe -m` — those never receive `-r` scripts. The booting instance was terminated " +
+        "and the request discarded; nothing was executed.",
+      {
+        durationMs: Date.now() - started,
+        hint:
+          "Either drive one After Effects started WITHOUT -m, or set up multi-instance use: " +
+          "`npx @kumoproductions/mcp-aftereffects install-agent`, restart After Effects, and set AE_MCP_INSTANCE " +
+          "to the instance to address (see README, 'Multiple After Effects instances').",
+      },
+    );
   }
 
   /**
@@ -476,9 +727,10 @@ export class FileIpcTransport implements AeTransport {
 
   /**
    * Drop request/response files old enough that no caller can still be waiting
-   * on them — leftovers from a crashed server or a killed AE. Best-effort and
-   * never fatal; a shared mailbox means another live client may own files we
-   * are looking at, so only clearly-expired ones are touched.
+   * on them — leftovers from a crashed server or a killed AE — and instance
+   * directories whose agent has been silent for as long. Best-effort and never
+   * fatal; a shared mailbox means another live client may own files we are
+   * looking at, so only clearly-expired ones are touched.
    */
   private async sweepStaleFiles(): Promise<void> {
     try {
@@ -505,6 +757,7 @@ export class FileIpcTransport implements AeTransport {
       } catch {
         /* no lock, or raced with its owner */
       }
+      await sweepDeadInstanceDirs();
     } catch {
       /* directory missing or unreadable — setupError already covers it */
     }

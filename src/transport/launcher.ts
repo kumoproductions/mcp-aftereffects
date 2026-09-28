@@ -1,10 +1,14 @@
 // How the dispatcher gets into After Effects, per platform.
 //
 // win32 — `AfterFX.exe -r dispatcher.jsx`. Fire-and-forget: the spawned
-// process hands the script to the running AE instance (or boots one) and
-// exits; its exit code says nothing. `-r` can carry only a file path, so the
-// dispatcher must find the mailbox on its own (pointer file / shared temp-dir
-// convention — see config.ts and dispatcher.jsx).
+// process hands the script to the running AE instance and exits; its exit
+// code says nothing. `-r` can carry only a file path, so the dispatcher must
+// find the mailbox on its own (pointer file / shared temp-dir convention — see
+// config.ts and dispatcher.jsx). When NO instance is registered to receive
+// the hand-off — none running, or only ones started with `-m`, which never
+// register — the spawned process instead becomes an instance itself, runs the
+// script on an empty project and quits; the transport watches for that child
+// outliving a forwarder (see PHANTOM_LAUNCH_MS).
 //
 // darwin — After Effects has no `-r` equivalent; the scripting entry point is
 // AppleScript. `osascript` sends a DoScript event carrying a two-statement
@@ -26,10 +30,17 @@ export interface LaunchPlan {
    * false for AfterFX.exe, whose exit code is noise.
    */
   diagnoseExit: boolean;
+  /**
+   * Treat a child that is still alive PHANTOM_LAUNCH_MS after spawning, with
+   * the request unconsumed, as AE booting a throwaway instance rather than
+   * forwarding. True for AfterFX.exe (a forwarder exits within a second);
+   * false for osascript, which legitimately blocks for the DoScript duration.
+   */
+  detectPhantom: boolean;
 }
 
 /** ExtendScript single-quoted string literal for a filesystem path. */
-function jsxPath(p: string): string {
+export function jsxPath(p: string): string {
   return `'${p.replace(/\\/g, "/").replace(/'/g, "\\'")}'`;
 }
 
@@ -46,6 +57,28 @@ function appBundlePath(aePath: string): string {
   const normalized = aePath.replace(/\\/g, "/");
   const match = normalized.match(/^(.*?\.app)(\/|$)/);
   return match ? match[1] : normalized;
+}
+
+/**
+ * How to start a NEW After Effects instance (instance.start), as opposed to
+ * reaching a running one. Windows: `AfterFX.exe -m` — the spawned process IS
+ * the instance, so the AE_MCP_INSTANCE the caller puts in its environment is
+ * what jsx/agent.jsx reads. macOS: `open -n` starts a second copy of the
+ * bundle; `--env` (macOS 12+) carries the variable into it. The macOS plan is
+ * not yet verified on hardware.
+ */
+export function buildInstanceLaunchPlan(
+  aePath: string,
+  instanceId: string,
+  platform: NodeJS.Platform = process.platform,
+): { command: string; args: string[] } {
+  if (platform === "darwin") {
+    return {
+      command: "/usr/bin/open",
+      args: ["-n", "--env", `AE_MCP_INSTANCE=${instanceId}`, "-a", appBundlePath(aePath)],
+    };
+  }
+  return { command: aePath, args: ["-m"] };
 }
 
 export function buildLaunchPlan(
@@ -72,7 +105,8 @@ export function buildLaunchPlan(
         "end timeout",
       ],
       diagnoseExit: true,
+      detectPhantom: false,
     };
   }
-  return { command: aePath, args: ["-r", dispatcherJsx], diagnoseExit: false };
+  return { command: aePath, args: ["-r", dispatcherJsx], diagnoseExit: false, detectPhantom: true };
 }

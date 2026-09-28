@@ -20,7 +20,9 @@ import "../src/operations/index.js";
 import { nullTransport } from "./helpers/null-transport.js";
 
 const DISPATCHER = readFileSync(
-  fileURLToPath(new URL("../jsx/dispatcher.jsx", import.meta.url)),
+  // The undo-group / dialog-suppression branch lives in serve.jsx, shared by
+  // the dispatcher (push) and the resident agent (pull).
+  fileURLToPath(new URL("../jsx/serve.jsx", import.meta.url)),
   "utf8",
 );
 
@@ -133,7 +135,7 @@ describe("batch.run", () => {
   });
 });
 
-describe("dispatcher", () => {
+describe("request server (serve.jsx)", () => {
   it("opens an undo group only when the request asks for one", () => {
     expect(DISPATCHER).toContain("request.undoGroup !== false");
     // One call site, and it sits inside the guard — an unguarded second one
