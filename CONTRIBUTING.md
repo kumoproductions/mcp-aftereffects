@@ -120,7 +120,7 @@ Every tool failure returns the same shape — `{ ok: false, error: { code, messa
 | `TRANSPORT`                       | Spawn or filesystem failure on the Node side (retryable)                       | Check `AE_MCP_EXE`; retry                                                 |
 | `AE_NOT_FOUND`                    | `AfterFX.exe` could not be located                                             | Set `AE_MCP_EXE`                                                          |
 | `NO_INSTANCE`                     | No After Effects instance could take the call (the message lists what is live) | Name one (`AE_MCP_INSTANCE` / `instance`), install the agent, or start AE |
-| `DIALOG_OPEN`                     | AE is showing a modal dialog; `details.dialogs` quotes it (Windows)            | `instance.dismiss_dialog { id }` if harmless, else ask the user           |
+| `DIALOG_OPEN`                     | AE shows a modal; `details.dialogs` quotes it (macOS text needs Accessibility) | `instance.dismiss_dialog { id }` (macOS: needs Accessibility), else ask   |
 | `INVALID_ARGS`                    | Arguments failed the operation's parameter schema                              | Fix the args (`details.issues` says how)                                  |
 | `UNKNOWN_OPERATION` / `_CATEGORY` | No such operation/category                                                     | `ae_catalog`; `details.suggestion` may name it                            |
 | `FORBIDDEN`                       | Blocked by the capability policy                                               | Stop — this is a deployment decision, not a bug                           |
