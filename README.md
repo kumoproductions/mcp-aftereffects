@@ -152,6 +152,10 @@ Using `AE_MCP_ALLOW_CATEGORIES`, you can restrict the types of operations permit
 
 For example, you can limit permissions to only keyframe-related operations depending on your use case.
 
+### 32bpc Projects
+
+In a 32bpc project, `effect.add` refuses an effect that processes at 16 or 8bpc, since it would clip every value above 1.0 at that point in the stack, and the AI is told to pick a 32bpc effect instead. It adds the effect anyway only when asked to (`allowLowBitDepth`). Plug-in effects' depth is read from their plug-in files; Adobe's own effects are measured once per session on a throwaway comp that is removed straight away. If your plug-ins live outside After Effects' `Plug-ins` folder and the shared MediaCore folder, list the extra folders in `AE_MCP_PLUGIN_DIRS` (separated by `;` on Windows, `:` on macOS).
+
 ### Multiple After Effects Instances
 
 After Effects can run several copies at once (`AfterFX.exe -m`), each with its own project. Out of the box the server reaches only the first, normally started copy: instances started with `-m` never receive the scripts it launches. To drive them, install the resident agent once:

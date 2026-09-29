@@ -213,15 +213,19 @@ export const doTool = defineTool({
     // longer reach the model as a successful call.
     const reported = jsxReportedFailure(opResult);
     if (reported) {
+      // An operation can name the next step itself (`{ ok: false, error, hint }`).
+      const opHint = (opResult as { hint?: unknown }).hint;
       return errorResult("OPERATION_FAILED", `${op.name}: ${reported.error}`, {
         details: { operation: op.name, result: opResult, context },
         logs: result.logs,
         durationMs: result.durationMs,
-        ...(isBatchShaped(opResult)
-          ? {
-              hint: "Inspect details.result.results — each entry matches the input order and carries its own error.",
-            }
-          : {}),
+        ...(typeof opHint === "string"
+          ? { hint: opHint }
+          : isBatchShaped(opResult)
+            ? {
+                hint: "Inspect details.result.results — each entry matches the input order and carries its own error.",
+              }
+            : {}),
       });
     }
 

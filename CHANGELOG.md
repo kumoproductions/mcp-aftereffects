@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **32bpc projects no longer get effects that clamp the float pipeline.** In a 32bpc project, `effect.add` first looks up what depth the effect processes at and refuses one that runs at 16 or 8bpc — it would clip every value above 1.0 and quantize the image at that point in the stack — with a hint to pick a 32bpc effect. `allowLowBitDepth: true` adds it anyway (the result carries a `warning`), for when the user accepts the clamping. An effect whose depth is unknown is added with a warning.
+- **`effect.bit_depth { matchNames }`** reports the depth effects process at (`bpc: 32 | 16 | 8`, or `null` with a `reason`), which the scripting API does not expose:
+  - **Plug-in effects** (third-party, and the bundled Cycore `CC …` set) are read from the `eGLO` / `eGL2` flags in their PiPL resource — `.aex` PE resources on Windows, `.plugin/Contents/Resources/*.rsrc` on macOS — scanned once per server process from After Effects' `Plug-ins` folder and the shared MediaCore folder (`AE_MCP_PLUGIN_DIRS` adds more). They are never rendered: a third-party render can block After Effects indefinitely (seen with a licensing prompt).
+  - **Adobe's own effects** register in code and carry no PiPL, so they are measured: applied twice to a throwaway layer in a 32bpc comp with different float gradients as input. An effect that is not float-aware gets a 16bpc (8bpc) copy of its input, so `sampleImage` reads its output back exactly on the 1/131072 (1/1020) grid; a float-aware one leaves values off it or outside 0–1. Checked on AE 26.5 against the 78 bundled plug-ins whose PiPL gives the true answer: 65 verdicts, all correct, 13 inconclusive. The comp is removed and the project's own depth restored (it is switched to 32bpc for the measurement when needed); results are cached per After Effects process, ~0.4 s each. The few Adobe effects that open a dialog when applied (Apply Color LUT, and the legacy Basic Text, Numbers and Path Text) are not measured.
+  - Also available to `eval.run` as `AE.effectBitDepth(matchName)`.
+- **`project.list_effects`** gains `category` and `search` filters and `bitDepth: true`, which adds each listed effect's `bpc` (at most 25 effects that need measuring per call; refused under `AE_MCP_READONLY`, since measuring adds a temporary comp). Its result now includes `projectBpc`.
+- The ambient context on every `ae_do` response includes `project.bitsPerChannel`, and `ae_context` gains a tip on choosing effects for 32bpc projects.
+
+### Changed
+
+- An operation that fails with `{ ok: false, error, hint }` now has its `hint` passed through to the error envelope (it was dropped for everything but `batch.run`).
+
 ## [0.3.1] - 2026-09-29
 
 ### Added
