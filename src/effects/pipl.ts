@@ -194,6 +194,9 @@ export function rsrcResources(data: Buffer, type = "PiPL"): Buffer[] {
         const ref = refList + r * 12;
         const at = dataOff + (data.readUInt32BE(ref + 4) & 0x00ffffff);
         const len = data.readUInt32BE(at);
+        // subarray clamps silently: a truncated PiPL could still yield a
+        // matchName with its eGL2 flags cut off — a 32bpc effect read as 16.
+        if (at + 4 + len > data.length) continue;
         found.push(data.subarray(at + 4, at + 4 + len));
       }
     }

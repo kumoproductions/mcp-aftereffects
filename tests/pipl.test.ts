@@ -3,8 +3,6 @@
 // walker — on synthetic buffers, so the suite runs anywhere. The PE walker is
 // exercised against real plug-ins when an After Effects install is present.
 
-import { existsSync } from "node:fs";
-
 import { describe, expect, it } from "vitest";
 
 import {
@@ -155,24 +153,32 @@ describe("rsrcResources", () => {
     ]);
   });
 
+  it("skips a resource whose declared length runs past the file", () => {
+    const whole = buildRsrc([effectPipl("FX A", DEEP, FLOAT | SMART, false)]);
+    // Declare a length longer than the whole file.
+    const dataOff = whole.readUInt32BE(0);
+    whole.writeUInt32BE(whole.readUInt32BE(dataOff) + whole.length, dataOff);
+    expect(rsrcResources(whole)).toEqual([]);
+  });
+
   it("returns nothing for garbage", () => {
     expect(rsrcResources(Buffer.from("not a resource file"))).toEqual([]);
   });
 });
 
-const PLUGIN_DIRS = defaultPluginDirs();
-const CYCORE_PRESENT = PLUGIN_DIRS.some((d) => existsSync(d)) && process.platform === "win32";
+// Scanned once; the suite below runs only where Cycore is actually installed
+// (the MediaCore folder alone exists on machines without After Effects).
+const INSTALLED = process.platform === "win32" ? scanPluginDirs(defaultPluginDirs()) : new Map();
 
 describe("scanPluginDirs against an installed After Effects", () => {
-  it.skipIf(!CYCORE_PRESENT)(
+  it.skipIf(!INSTALLED.has("CC Light Rays"))(
     "reads the bundled Cycore effects' depths from their .aex files",
     () => {
-      const found = scanPluginDirs(PLUGIN_DIRS);
       // Known badges in the Effects & Presets panel.
-      expect(found.get("CC Light Rays")?.bpc).toBe(32);
-      expect(found.get("CC Bender")?.bpc).toBe(16);
+      expect(INSTALLED.get("CC Light Rays")?.bpc).toBe(32);
+      expect(INSTALLED.get("CC Bender")?.bpc).toBe(16);
       // Adobe's own effects register in code and have no PiPL.
-      expect(found.has("ADBE Gaussian Blur 2")).toBe(false);
+      expect(INSTALLED.has("ADBE Gaussian Blur 2")).toBe(false);
     },
   );
 });

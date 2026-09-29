@@ -389,22 +389,38 @@ registerOp({
             var _q = ${jsxVal(typeof args.search === "string" ? args.search.toLowerCase() : null)};
             var _measure = ${jsxVal(args.bitDepth === true)};
             var _known = ${jsxVal(args.bitDepth === true ? knownBitDepthTable() : {})};
-            var list = null;
-            try {
-                // app.effects builds a fresh array on every access: read it
-                // once (indexing it inside the loop took ~13 s for 640 effects).
-                var _all = app.effects;
-                if (_all && _all.length) {
-                    list = [];
-                    for (var i = 0; i < _all.length; i++) {
-                        var _e = _all[i];
-                        if (_cat !== null && String(_e.category).toLowerCase() !== _cat) continue;
-                        if (_q !== null && String(_e.displayName).toLowerCase().indexOf(_q) === -1 && String(_e.matchName).toLowerCase().indexOf(_q) === -1) continue;
-                        list.push({ displayName: _e.displayName, matchName: _e.matchName, category: _e.category });
-                    }
-                }
-            } catch (e) {}
-            if (list && _measure) {
+            // app.effects builds a fresh array on every access: read it once
+            // (indexing it inside the loop took ~13 s for 640 effects).
+            var _source = "app.effects";
+            var _all = null;
+            try { _all = app.effects; } catch (e) {}
+            if (!_all || !_all.length) {
+                _source = "curated";
+                _all = [
+                    { displayName: "Fast Box Blur", matchName: "ADBE Box Blur2", category: "Blur & Sharpen" },
+                    { displayName: "Gaussian Blur", matchName: "ADBE Gaussian Blur 2", category: "Blur & Sharpen" },
+                    { displayName: "Glow", matchName: "ADBE Glo2", category: "Stylize" },
+                    { displayName: "Drop Shadow", matchName: "ADBE Drop Shadow", category: "Perspective" },
+                    { displayName: "Fill", matchName: "ADBE Fill", category: "Generate" },
+                    { displayName: "Tint", matchName: "ADBE Tint", category: "Color Correction" },
+                    { displayName: "Hue/Saturation", matchName: "ADBE HUE SATURATION", category: "Color Correction" },
+                    { displayName: "Levels", matchName: "ADBE Easy Levels2", category: "Color Correction" },
+                    { displayName: "Curves", matchName: "ADBE CurvesCustom", category: "Color Correction" },
+                    { displayName: "Brightness & Contrast", matchName: "ADBE Brightness & Contrast 2", category: "Color Correction" },
+                    { displayName: "Turbulent Noise", matchName: "ADBE Turbulent Noise", category: "Noise & Grain" },
+                    { displayName: "Transform", matchName: "ADBE Geometry2", category: "Distort" },
+                    { displayName: "Linear Wipe", matchName: "ADBE Linear Wipe", category: "Transition" },
+                    { displayName: "Radial Wipe", matchName: "ADBE Radial Wipe", category: "Transition" }
+                ];
+            }
+            var list = [];
+            for (var i = 0; i < _all.length; i++) {
+                var _e = _all[i];
+                if (_cat !== null && String(_e.category).toLowerCase() !== _cat) continue;
+                if (_q !== null && String(_e.displayName).toLowerCase().indexOf(_q) === -1 && String(_e.matchName).toLowerCase().indexOf(_q) === -1) continue;
+                list.push({ displayName: _e.displayName, matchName: _e.matchName, category: _e.category });
+            }
+            if (_measure) {
                 // Plug-in effects are answered from their PiPL and earlier
                 // measurements from the cache; only the rest render.
                 var _cache = $.global.AE_MCP_BIT_DEPTH_CACHE || {};
@@ -422,26 +438,7 @@ registerOp({
                     if (_d.bpc === null) list[j].bpcReason = _d.reason;
                 }
             }
-            if (list) return { source: "app.effects", projectBpc: app.project.bitsPerChannel, effects: list };
-            return {
-                source: "curated",
-                effects: [
-                    { displayName: "Fast Box Blur", matchName: "ADBE Box Blur2" },
-                    { displayName: "Gaussian Blur", matchName: "ADBE Gaussian Blur 2" },
-                    { displayName: "Glow", matchName: "ADBE Glo2" },
-                    { displayName: "Drop Shadow", matchName: "ADBE Drop Shadow" },
-                    { displayName: "Fill", matchName: "ADBE Fill" },
-                    { displayName: "Tint", matchName: "ADBE Tint" },
-                    { displayName: "Hue/Saturation", matchName: "ADBE HUE SATURATION" },
-                    { displayName: "Levels", matchName: "ADBE Easy Levels2" },
-                    { displayName: "Curves", matchName: "ADBE CurvesCustom" },
-                    { displayName: "Brightness & Contrast", matchName: "ADBE Brightness & Contrast 2" },
-                    { displayName: "Turbulent Noise", matchName: "ADBE Turbulent Noise" },
-                    { displayName: "Transform", matchName: "ADBE Geometry2" },
-                    { displayName: "Linear Wipe", matchName: "ADBE Linear Wipe" },
-                    { displayName: "Radial Wipe", matchName: "ADBE Radial Wipe" }
-                ]
-            };
+            return { source: _source, projectBpc: app.project.bitsPerChannel, effects: list };
         `;
   },
 });

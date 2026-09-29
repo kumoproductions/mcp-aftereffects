@@ -89,6 +89,19 @@ describe("project.list_effects filters and bitDepth", () => {
     expect(measured).toContain("AE.effectBitDepth(list[j].matchName, _known.hasOwnProperty");
   });
 
+  it("runs the curated fallback through the same filters and measurement", () => {
+    const jsx = getOp("project.list_effects")!.toJsx({
+      category: "Blur & Sharpen",
+      bitDepth: true,
+    });
+    expect(jsx).toContain('_source = "curated"');
+    // One filter/measure loop over whichever source was found.
+    expect(jsx.match(/_cat !== null/g)).toHaveLength(1);
+    expect(jsx).toContain(
+      "return { source: _source, projectBpc: app.project.bitsPerChannel, effects: list }",
+    );
+  });
+
   it("refuses to measure under AE_MCP_READONLY — the probe adds a temporary comp", () => {
     process.env.AE_MCP_READONLY = "1";
     const op = getOp("project.list_effects")!;
