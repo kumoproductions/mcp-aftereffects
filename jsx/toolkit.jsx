@@ -800,3 +800,176 @@ AE.applyTemplate = function (target, name, label) {
     }
     return label + ": no template named '" + name + "' — available: " + avail.join(" | ");
 };
+
+// ---------- Effect bit depth ----------
+
+// Adobe effects that open a modal dialog the moment they are applied (a file
+// picker, or the legacy text effects' font dialog) — found by applying every
+// "ADBE" effect on AE 26.5. A probe must never add one: the dialog blocks
+// every script until someone closes it.
+AE.BIT_DEPTH_PROBE_SKIP = {
+    "ADBE Apply Color LUT": true,
+    "ADBE Apply Color LUT2": true,
+    "ADBE Basic Text": true,
+    "ADBE Basic Text2": true,
+    "ADBE Numbers": true,
+    "ADBE Numbers2": true,
+    "ADBE Path Text": true
+};
+
+// The bit depth an effect PROCESSES at: { matchName, bpc: 32|16|8|null,
+// source: "pipl"|"measured"|null, reason }. bpc null = unknown.
+//
+// `known` is what Node read from the effect's PiPL resource (src/effects/
+// pipl.ts) — { bpc } or null. Plug-in effects are answered from it and never
+// rendered: a third-party render can block After Effects indefinitely
+// (licensing UI). Only Adobe's own effects ("ADBE …"), which register in code
+// and have no PiPL, are measured — see AE._measureBitDepth.
+//
+// Measurements are cached per matchName for the life of the After Effects
+// process ($.global survives between calls).
+AE.effectBitDepth = function (matchName, known) {
+    matchName = String(matchName);
+    if (known && known.bpc) {
+        return { matchName: matchName, bpc: known.bpc, source: "pipl", reason: "plug-in PiPL flags" };
+    }
+    var cache = $.global.AE_MCP_BIT_DEPTH_CACHE;
+    if (!cache) { cache = {}; $.global.AE_MCP_BIT_DEPTH_CACHE = cache; }
+    var key = "mn:" + matchName;
+    if (cache.hasOwnProperty(key)) return cache[key];
+    if (matchName.indexOf("ADBE ") !== 0) {
+        return { matchName: matchName, bpc: null, source: null, reason: "plug-in effect with no readable PiPL; not rendered (a third-party render can hang on licensing UI)" };
+    }
+    if (AE.BIT_DEPTH_PROBE_SKIP[matchName] === true) {
+        return { matchName: matchName, bpc: null, source: null, reason: "opens a dialog when applied; not measured" };
+    }
+    var res = AE._measureBitDepth(matchName);
+    // Only a real measurement is cached; a failure (an audio effect that
+    // refuses a visual layer, a render error) is retried next time.
+    if (res.cacheable) cache[key] = res.info;
+    return res.info;
+};
+
+// Measure by rendering. Nothing in the scripting DOM exposes the depth
+// (app.effects has displayName/matchName/category/version only), so:
+//
+// in a 32bpc project, a throwaway comp feeds the effect a float gradient and
+// reads six pixels back through sampleImage — twice, with different
+// gradients. An effect that is not float-aware is handed a 16bpc (or 8bpc)
+// copy of its input and returns a buffer of that depth, so its output lies on
+// a grid: sampleImage at a pixel center with radius 0.5 averages up to four
+// pixels, so 16bpc values are multiples of 1/131072 (4 × 32768) and 8bpc
+// values of 1/1020 (4 × 255). A float-aware effect leaves values off both
+// grids, or outside 0–1. See AE._classifyBitDepthSamples for the verdict.
+//
+// Validated on AE 26.5 against the 78 bundled plug-in effects (Cycore CC …)
+// whose PiPL flags give the true answer: 65 verdicts, all correct, 13 null.
+// Across Adobe's own effects: 114 × 32, 45 × 16, 29 × 8, 26 null (mostly
+// generators), ~0.4 s each.
+//
+// Temporarily switches the project to 32bpc when it is not; the comp is
+// removed and the depth restored before returning.
+AE._measureBitDepth = function (matchName) {
+    function info(bpc, reason) {
+        return { matchName: matchName, bpc: bpc, source: bpc === null ? null : "measured", reason: reason };
+    }
+    var proj = app.project;
+    var prevBpc = proj.bitsPerChannel;
+    var comp = null;
+    var inputs = [
+        [[0.21, 0.37, 0.53, 1], [0.83, 0.61, 0.29, 1]],
+        [[0.67, 0.19, 0.44, 1], [0.13, 0.58, 0.91, 1]]
+    ];
+    try {
+        if (prevBpc !== 32) proj.bitsPerChannel = 32;
+        // Odd, non-power-of-two size: a generator's gradient over a 32px
+        // span evaluates to dyadic fractions that sit on the 16bpc grid by
+        // coincidence (Gradient Ramp read as 16bpc at 32x32). Large enough
+        // that the samples stay 25px+ from the layer edge, where a blur pulls
+        // in transparency (Gaussian Blur left no opaque pixel at 37x29).
+        comp = proj.items.addComp("__mcp_bit_depth_probe", 101, 77, 1, 1 / 24, 24);
+        var reader = comp.layers.addText("0");
+        var runs = [];
+        for (var r = 0; r < inputs.length; r++) {
+            // A shape layer, not a solid: a solid would leave a footage item
+            // (and possibly a new "Solids" folder) behind in the project.
+            var src = comp.layers.addShape();
+            src.name = "__probe";
+            AE.rect(src, [200, 200], [0, 0], { fill: [0.3141592, 0.3141592, 0.3141592] });
+            var ramp = src.property("Effects").addProperty("ADBE Ramp");
+            ramp.property(1).setValue([13, 9]);
+            ramp.property(2).setValue(inputs[r][0]);
+            ramp.property(3).setValue([88, 70]);
+            ramp.property(4).setValue(inputs[r][1]);
+            try {
+                src.property("Effects").addProperty(matchName);
+            } catch (eAdd) {
+                return { cacheable: false, info: info(null, "could not apply to a layer: " + AE.errText(eAdd)) };
+            }
+            var st = reader.property("Source Text");
+            st.expression =
+                "var l = thisComp.layer(\"__probe\"); var r = [];" +
+                " var p = [[30.5, 25.5], [50.5, 38.5], [70.5, 30.5], [40.5, 51.5], [62.5, 49.5], [33.5, 44.5]];" +
+                " for (var i = 0; i < p.length; i++) r = r.concat(l.sampleImage(p[i], [0.5, 0.5], true, 0));" +
+                " r.join(\",\")";
+            var raw = String(st.value.text).split(",");
+            if (raw.length !== 24) return { cacheable: false, info: info(null, "could not sample the output") };
+            var nums = [];
+            for (var k = 0; k < raw.length; k++) {
+                var x = parseFloat(raw[k]);
+                if (isNaN(x)) return { cacheable: false, info: info(null, "could not sample the output") };
+                nums.push(x);
+            }
+            runs.push(nums);
+            src.remove();
+        }
+        return { cacheable: true, info: AE._classifyBitDepthSamples(runs[0], runs[1], info) };
+    } catch (e) {
+        return { cacheable: false, info: info(null, "measurement failed: " + AE.errText(e)) };
+    } finally {
+        try { if (comp) comp.remove(); } catch (eC) {}
+        try { if (proj.bitsPerChannel !== prevBpc) proj.bitsPerChannel = prevBpc; } catch (eB) {}
+    }
+};
+
+// Verdict from two runs of RGBA samples taken with different inputs.
+//   - any value outside 0–1, or off both grids    → 32 (float-aware)
+//   - output follows the input, and its informative
+//     values all sit on the 16bpc / the 8bpc grid → 16 / 8
+//   - otherwise                                   → null (inconclusive)
+// Values on BOTH grids (0, 0.25, 0.5, 1) are skipped as uninformative. The
+// color of a partly transparent pixel comes back unpremultiplied, which
+// divides it off any grid, so only its alpha counts (Gaussian Blur's default
+// 25px blur leaves alpha at 0.9987 everywhere — itself off-grid, i.e. float). An output that ignores the input (a generator)
+// only ever proves float: its default colors are 8-bit values and its
+// geometry can land on dyadic fractions, so a grid match there is no proof
+// of a low-depth render — and refusing a 32bpc effect is the costly mistake.
+AE._classifyBitDepthSamples = function (a, b, info) {
+    function onGrid(x, k) { var v = x * k; return Math.abs(v - Math.round(v)) < 1e-3; }
+    var dependsOnInput = false;
+    for (var i = 0; i < a.length; i++) if (Math.abs(a[i] - b[i]) > 1e-6) dependsOnInput = true;
+    var n8 = 0, n16 = 0, off = 0;
+    var runs = [a, b];
+    for (var r = 0; r < runs.length; r++) {
+        var s = runs[r];
+        for (var p = 0; p + 3 < s.length; p += 4) {
+            // Alpha is never unpremultiplied, so it is always evidence; the
+            // color channels only where the pixel is opaque.
+            for (var c = (s[p + 3] === 1 ? 0 : 3); c < 4; c++) {
+                var x = s[p + c];
+                if (x > 1 + 1e-6 || x < -1e-6) return info(32, "output outside 0-1");
+                var g8 = onGrid(x, 1020), g16 = onGrid(x, 131072);
+                if (g8 && g16) continue;
+                if (!g8 && !g16) off++;
+                else if (g8) n8++;
+                else n16++;
+            }
+        }
+    }
+    if (off > 0) return info(32, "float output");
+    if ((n16 > 0) !== (n8 > 0)) {
+        if (!dependsOnInput) return info(null, "output ignores the input and sits on a low-depth grid - inconclusive");
+        return n16 > 0 ? info(16, "output on the 16bpc grid") : info(8, "output on the 8bpc grid");
+    }
+    return info(null, "no informative output (flat, transparent or mixed) - inconclusive");
+};

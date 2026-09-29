@@ -48,6 +48,7 @@ const CODE = `
             "AE.rect(shapeLayerOrGroup, [w,h], [x,y], {name, roundness, fill:[r,g,b], stroke, strokeWidth}) — group+path+style in one call",
             "AE.ellipse(shapeLayerOrGroup, [w,h], [x,y], {name, fill, stroke, strokeWidth})",
             "AE.ensureParentDir(path) — mkdir -p for an output file, returns the File",
+            "AE.effectBitDepth(matchName) — processing depth { bpc: 32|16|8|null, reason } of an Adobe (ADBE) effect, measured and cached; plug-in effects need effect.bit_depth (reads their PiPL)",
             "AE.itemTypeName(item) — 'CompItem' | 'FootageItem' | 'FolderItem' | 'UnknownItem'",
             "AE.serializeItemSummary(item)",
             "AE.serializeLayerSummary(layer)",
@@ -80,6 +81,7 @@ const CODE = `
             "imported Illustrator layers: layer.convert_to_shapes (strips ' Outlines', can remove the source layer/footage); then shape.group_bounds / layer.split_groups to work per part",
             "layer targets accept arrays everywhere they accept 'all' — [\\"A\\", \\"B\\", { id: 12 }] is one call",
             "verifying motion: ae_render_frame times + contactSheet tiles the frames into one labelled PNG; analyze reports edge bands / content bounds; comp.sample reads values at several times",
+            "32bpc projects: effect.add refuses an effect that processes at 16/8bpc (it would clip values above 1.0) — pick effects from project.list_effects { category or search, bitDepth: true } with bpc 32; allowLowBitDepth: true only when the user accepts the clamping. eval.run bypasses this check — look effects up with effect.bit_depth first",
             "several After Effects instances (AfterFX.exe -m): each MCP server addresses ONE, chosen by AE_MCP_INSTANCE (instance id or open project file name); the response's instances[] lists what is live — if the project you need is open elsewhere, say so instead of editing the wrong one"
         ],
         undoContract: [

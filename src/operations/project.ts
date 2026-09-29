@@ -1,7 +1,16 @@
 // Project-level operations — clear, delete item, find layers, list effects.
 
 import { registerOp, jsxVal, jsxCompPreamble } from "../registry.js";
+import { knownBitDepthTable } from "../effects/pipl.js";
+import { readOnlyMode } from "../policy.js";
 import { UNDO_COMMAND_ID } from "./command.js";
+
+/**
+ * Most Adobe effects project.list_effects measures in one call (bitDepth:
+ * true). Each renders a throwaway layer twice — ~0.4 s, up to ~1.3 s (AE
+ * 26.5) — so this keeps a worst case inside the default 60 s timeout.
+ */
+const BIT_DEPTH_LIST_LIMIT = 25;
 
 registerOp({
   name: "project.open",
@@ -344,20 +353,76 @@ registerOp({
   category: "project",
   readOnly: true,
   description:
-    "List available effect matchNames in the running AE. Uses app.effects if available, otherwise a curated list.",
-  params: [],
-  toJsx() {
+    "List available effect matchNames in the running AE. Uses app.effects if available, otherwise a curated list. " +
+    "Narrow with category / search; bitDepth: true also measures each listed effect's processing depth (see effect.bit_depth) " +
+    `— plug-in effects are read from their PiPL instantly, Adobe effects are rendered once (at most ${BIT_DEPTH_LIST_LIMIT} per call), so filter first. In a 32bpc project, choose effects with bpc 32.`,
+  params: [
+    {
+      name: "category",
+      type: "string",
+      description: "Only effects in this category (case-insensitive, e.g. 'Blur & Sharpen')",
+      required: false,
+    },
+    {
+      name: "search",
+      type: "string",
+      description:
+        "Only effects whose displayName or matchName contains this text (case-insensitive)",
+      required: false,
+    },
+    {
+      name: "bitDepth",
+      type: "boolean",
+      description: `Add each listed effect's processing bpc (32/16/8, null = unknown, see bpcReason). At most ${BIT_DEPTH_LIST_LIMIT} effects needing a render measurement per call; results are cached for the session.`,
+      required: false,
+      default: false,
+    },
+  ],
+  toJsx(args) {
+    // Measuring adds and removes a throwaway comp (and may flip the project to
+    // 32bpc for the duration) — invisible afterwards, but not "cannot modify".
+    if (args.bitDepth === true && readOnlyMode()) {
+      return `return { ok: false, error: "bitDepth measures effects on a temporary comp, which AE_MCP_READONLY=1 does not allow" };`;
+    }
     return `
+            var _cat = ${jsxVal(typeof args.category === "string" ? args.category.toLowerCase() : null)};
+            var _q = ${jsxVal(typeof args.search === "string" ? args.search.toLowerCase() : null)};
+            var _measure = ${jsxVal(args.bitDepth === true)};
+            var _known = ${jsxVal(args.bitDepth === true ? knownBitDepthTable() : {})};
             var list = null;
             try {
-                if (app.effects && app.effects.length) {
+                // app.effects builds a fresh array on every access: read it
+                // once (indexing it inside the loop took ~13 s for 640 effects).
+                var _all = app.effects;
+                if (_all && _all.length) {
                     list = [];
-                    for (var i = 0; i < app.effects.length; i++) {
-                        list.push({ displayName: app.effects[i].displayName, matchName: app.effects[i].matchName, category: app.effects[i].category });
+                    for (var i = 0; i < _all.length; i++) {
+                        var _e = _all[i];
+                        if (_cat !== null && String(_e.category).toLowerCase() !== _cat) continue;
+                        if (_q !== null && String(_e.displayName).toLowerCase().indexOf(_q) === -1 && String(_e.matchName).toLowerCase().indexOf(_q) === -1) continue;
+                        list.push({ displayName: _e.displayName, matchName: _e.matchName, category: _e.category });
                     }
                 }
             } catch (e) {}
-            if (list) return { source: "app.effects", effects: list };
+            if (list && _measure) {
+                // Plug-in effects are answered from their PiPL and earlier
+                // measurements from the cache; only the rest render.
+                var _cache = $.global.AE_MCP_BIT_DEPTH_CACHE || {};
+                var _toMeasure = 0;
+                for (var m = 0; m < list.length; m++) {
+                    var _mn = String(list[m].matchName);
+                    if (_mn.indexOf("ADBE ") === 0 && !_known.hasOwnProperty(_mn) && !_cache.hasOwnProperty("mn:" + _mn)) _toMeasure++;
+                }
+                if (_toMeasure > ${BIT_DEPTH_LIST_LIMIT}) {
+                    return { ok: false, error: list.length + " effects match, " + _toMeasure + " of them need measuring — bitDepth measures at most ${BIT_DEPTH_LIST_LIMIT} per call", hint: "Narrow with category or search, or pass the candidates to effect.bit_depth." };
+                }
+                for (var j = 0; j < list.length; j++) {
+                    var _d = AE.effectBitDepth(list[j].matchName, _known.hasOwnProperty(list[j].matchName) ? { bpc: _known[list[j].matchName] } : null);
+                    list[j].bpc = _d.bpc;
+                    if (_d.bpc === null) list[j].bpcReason = _d.reason;
+                }
+            }
+            if (list) return { source: "app.effects", projectBpc: app.project.bitsPerChannel, effects: list };
             return {
                 source: "curated",
                 effects: [

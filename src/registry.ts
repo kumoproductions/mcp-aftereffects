@@ -215,7 +215,7 @@ export const AMBIENT_CONTEXT_JSX = `
     var _ctx = {};
     try {
         var _ai = app.project.activeItem;
-            _ctx.project = { numItems: app.project.numItems, dirty: app.project.dirty, file: app.project.file ? app.project.file.fsName.replace(/\\\\/g,"/") : null };
+            _ctx.project = { numItems: app.project.numItems, dirty: app.project.dirty, bitsPerChannel: app.project.bitsPerChannel, file: app.project.file ? app.project.file.fsName.replace(/\\\\/g,"/") : null };
         // Which After Effects instance answered (its resident agent's id), so
         // a session driving several never has to guess where an edit landed.
         try { _ctx.instance = $.global.AE_MCP_AGENT ? $.global.AE_MCP_AGENT.state.id : null; } catch (eInst) { _ctx.instance = null; }

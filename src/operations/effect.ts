@@ -1,12 +1,15 @@
 // Effect operations — add, remove, set property.
 
+import { knownBitDepth } from "../effects/pipl.js";
 import { registerOp, jsxVal, jsxCompLayerPreamble } from "../registry.js";
 
 registerOp({
   name: "effect.add",
   category: "effect",
   description:
-    "Add an effect to a layer by matchName. Use ae_do project.list_effects (or effect.list_on_layer on a reference layer) to find matchNames.",
+    "Add an effect to a layer by matchName. Use ae_do project.list_effects (or effect.list_on_layer on a reference layer) to find matchNames. " +
+    "In a 32bpc project the effect's processing depth is measured first (effect.bit_depth) and an effect that would clamp the float " +
+    "pipeline to 16/8bpc is REFUSED — pick a 32bpc alternative, or pass allowLowBitDepth: true only when the user accepts the clamping.",
   params: [
     { name: "comp", type: "any", description: "Comp name or id", required: true },
     {
@@ -27,13 +30,67 @@ registerOp({
       description: "Custom display name for the effect",
       required: false,
     },
+    {
+      name: "allowLowBitDepth",
+      type: "boolean",
+      description:
+        "Add the effect even though it processes below 32bpc in a 32bpc project (values above 1.0 clip, gradients band). Pass only when the user accepts that.",
+      required: false,
+      default: false,
+    },
   ],
   toJsx(args) {
     return `
             ${jsxCompLayerPreamble(args)}
-            var _fx = _layer.property("Effects").addProperty(${jsxVal(args.matchName)});
+            var _mn = ${jsxVal(args.matchName)};
+            var _depth = null;
+            if (app.project.bitsPerChannel === 32) {
+                _depth = AE.effectBitDepth(_mn, ${jsxVal(knownBitDepth(args.matchName))});
+                if (_depth.bpc !== null && _depth.bpc < 32 && ${jsxVal(args.allowLowBitDepth === true)} !== true) {
+                    return {
+                        ok: false,
+                        error: "'" + _mn + "' processes at " + _depth.bpc + "bpc, but the project is 32bpc: it would clip values above 1.0 and quantize the float pipeline at this point in the stack",
+                        hint: "Use a 32bpc effect for the same job (project.list_effects with bitDepth: true measures candidates), or pass allowLowBitDepth: true if the user accepts the clamping.",
+                        details: { matchName: _mn, bpc: _depth.bpc, projectBpc: 32 }
+                    };
+                }
+            }
+            var _fx = _layer.property("Effects").addProperty(_mn);
             ${args.name ? `_fx.name = ${jsxVal(args.name)};` : ""}
-            return { ok: true, effectIndex: _fx.propertyIndex, name: _fx.name, matchName: _fx.matchName };
+            var _res = { ok: true, effectIndex: _fx.propertyIndex, name: _fx.name, matchName: _fx.matchName };
+            if (_depth !== null) {
+                _res.bpc = _depth.bpc;
+                if (_depth.bpc === null) _res.warning = "could not determine the bit depth of '" + _mn + "' (" + _depth.reason + ") — check it in the Effects & Presets panel before relying on it in this 32bpc project";
+                else if (_depth.bpc < 32) _res.warning = "'" + _mn + "' processes at " + _depth.bpc + "bpc in a 32bpc project (added because allowLowBitDepth: true)";
+            }
+            return _res;
+        `;
+  },
+});
+
+registerOp({
+  name: "effect.bit_depth",
+  category: "effect",
+  description:
+    "The bit depth (32 / 16 / 8 bpc) effects process at — the scripting API does not expose it. Plug-in effects (third-party, Cycore CC …) " +
+    "are read from their PiPL flags (source: 'pipl'); Adobe's own effects are applied once to a throwaway 32bpc layer and their output " +
+    "checked for float precision (source: 'measured'), the project restored afterwards and the result cached for the session. " +
+    "bpc: null means unknown (reason says why). Use before choosing effects for a 32bpc project.",
+  params: [
+    {
+      name: "matchNames",
+      type: "array",
+      description: "Effect matchNames to measure, e.g. ['ADBE Gaussian Blur 2', 'ADBE Mosaic']",
+      required: true,
+    },
+  ],
+  toJsx(args) {
+    return `
+            var _mns = ${jsxVal(args.matchNames)};
+            var _known = ${jsxVal(Array.isArray(args.matchNames) ? args.matchNames.map(knownBitDepth) : [])};
+            var _out = [];
+            for (var _i = 0; _i < _mns.length; _i++) _out.push(AE.effectBitDepth(String(_mns[_i]), _known[_i] || null));
+            return { ok: true, projectBpc: app.project.bitsPerChannel, effects: _out };
         `;
   },
 });
