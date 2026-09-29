@@ -234,6 +234,22 @@ Please check the following:
 
 The call had no After Effects to go to. Either every running After Effects was started with `-m` and the agent is not installed (see [Multiple After Effects Instances](#multiple-after-effects-instances)), the instance named by `AE_MCP_INSTANCE` / `instance` is not running or is stuck in a dialog, or several agents are live and none was named. The error lists what is live.
 
+### `DIALOG_OPEN` — After Effects Is Showing a Dialog
+
+While After Effects shows a modal dialog, no script runs at all — neither the resident agent nor a `-r` launch. The most common cause is opening a project whose footage or fonts are missing ("N files are missing since you last saved this project"), and the dialog is often hidden behind the main window. The error quotes the dialog's text (on macOS, see below).
+
+- `instance.dialogs` lists the dialogs every running After Effects is showing.
+- `instance.dismiss_dialog { id }` closes it with Escape, the dialog's cancel action: a warning is acknowledged, and a question such as "Save changes before closing?" is cancelled rather than answered — nothing is saved or discarded. A dialog you want answered differently has to be clicked by you.
+- The agent resumes on its own once the dialog is gone; no restart is needed.
+- To avoid the missing-files warning in the first place, start After Effects without a project and open it with `project.open`, which suppresses the dialog.
+
+Dialog detection works on Windows and macOS. On macOS it has two tiers:
+
+- With Accessibility permission for the app that runs the MCP server (System Settings > Privacy & Security > Accessibility — your terminal, or the MCP client app), every dialog is found and its text read, and `instance.dismiss_dialog` works the same way as on Windows: Escape, the cancel action. A "Save changes before closing?" prompt is cancelled (the project stays open and unsaved); a warning or script `alert()` is acknowledged. After Effects is not brought to the front.
+- Without that permission, dialogs are only guessed at from the window list: most are found, with empty text (`accessibility: false`), but some — such as the Adobe licensing prompt — are missed, and none can be dismissed from here.
+
+Verified on After Effects 26.5 / macOS 26.4 with the missing-files warning, a script `alert()`, the save prompt and the System Compatibility Report.
+
 ### After Effects Stops at a "We detected a crash" Dialog
 
 If an After Effects process was killed (Task Manager, `taskkill`, a crash), the next launch shows the Safe Mode dialog and waits for a click — including instances started by `instance.start`, which then fail with `did not register`. Dismiss the dialog on screen. An instance that quits normally does not trigger it, so prefer `instance.stop` over killing.

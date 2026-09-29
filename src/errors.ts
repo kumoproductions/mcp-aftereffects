@@ -22,6 +22,12 @@ export type AeErrorCode =
    * or the push launch started a throwaway instance instead of reaching one.
    */
   | "NO_INSTANCE"
+  /**
+   * After Effects is showing a modal dialog, so no script can run until
+   * someone closes it. `details.dialogs` lists what it says (Windows and
+   * macOS; on macOS the text needs Accessibility permission).
+   */
+  | "DIALOG_OPEN"
   /** AE never wrote a response before the deadline. */
   | "TIMEOUT"
   /** Node-side failure: spawn, filesystem, JSON write. */

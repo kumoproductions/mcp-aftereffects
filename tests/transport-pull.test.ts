@@ -13,7 +13,7 @@ import { EventEmitter } from "node:events";
 import { promises as fs } from "node:fs";
 import { randomUUID } from "node:crypto";
 import * as path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import {
   BUSY_LOCK_PATH,
@@ -29,8 +29,34 @@ import {
   type LaunchedProcess,
   type SpawnFn,
 } from "../src/transport/FileIpcTransport.js";
+import {
+  type AeDialog,
+  setOsascriptRunner,
+  setPowerShellRunner,
+} from "../src/transport/dialogs.js";
 
-const INERT_EXE = process.platform === "win32" ? "C:/Windows/System32/cmd.exe" : "/bin/true";
+// The transport scans for After Effects dialogs on its failure paths. Never
+// let that reach the real desktop from a unit test.
+let restoreRunners: Array<() => void> = [];
+beforeAll(() => {
+  restoreRunners = [setPowerShellRunner(async () => "[]"), setOsascriptRunner(async () => "[]")];
+});
+afterAll(() => restoreRunners.forEach((restore) => restore()));
+
+const DIALOG: AeDialog = {
+  pid: 4242,
+  id: "123456",
+  text: "After Effects warning: 1 file is missing since you last saved this project.",
+  width: 492,
+  height: 260,
+  window: "Adobe After Effects 2026 - C:/work/ShotA.aep",
+};
+const seesDialog = async () => [DIALOG];
+
+const INERT_EXE = process.platform === "win32" ? "C:/Windows/System32/cmd.exe" : "/usr/bin/true";
+// Phantom detection is the `-r` path's; osascript legitimately blocks for the
+// DoScript duration, so macOS never treats a live child as a phantom.
+const itUnlessDarwin = it.skipIf(process.platform === "darwin");
 const savedExe = process.env.AE_MCP_EXE;
 
 afterEach(() => {
@@ -248,6 +274,47 @@ describe("pull path", () => {
     expect(await listMail(agent.dir, REQUEST_PREFIX)).toEqual([]);
   });
 
+  it("names the dialog when the instance stopped ticking behind one", async () => {
+    agent = new FakeAgent(null);
+    await agent.start();
+    const transport = new FileIpcTransport({
+      instance: agent.id,
+      spawn: recordingSpawn(() => {}).spawn,
+      scanDialogs: seesDialog,
+    });
+    const call = transport.execute({ code: "return 1;", label: "pull_modal", timeoutMs: 30_000 });
+    await sleep(200);
+    agent.pause();
+    await agent.heartbeat({ ts: Date.now() - HEARTBEAT_STALE_MS - 1000 });
+
+    const res = await call;
+    expect(res.errorCode).toBe("DIALOG_OPEN");
+    expect(res.error).toContain("1 file is missing");
+    expect(res.error).toContain("instance.dismiss_dialog");
+    expect(res.dialogs).toEqual([DIALOG]);
+    expect(await listMail(agent.dir, REQUEST_PREFIX)).toEqual([]);
+  });
+
+  it("reports DIALOG_OPEN for a stale named instance before sending anything", async () => {
+    agent = new FakeAgent(null);
+    await agent.start();
+    agent.pause();
+    await agent.heartbeat({ ts: Date.now() - HEARTBEAT_STALE_MS - 1000 });
+    const transport = new FileIpcTransport({
+      instance: agent.id,
+      spawn: recordingSpawn(() => {}).spawn,
+      scanDialogs: seesDialog,
+    });
+    const res = await transport.execute({
+      code: "return 1;",
+      label: "pull_stale",
+      timeoutMs: 5_000,
+    });
+    expect(res.errorCode).toBe("DIALOG_OPEN");
+    expect(res.error).toContain(agent.id);
+    expect(await listMail(agent.dir, REQUEST_PREFIX)).toEqual([]);
+  });
+
   it("times out naming the instance and reclaims an unconsumed request", async () => {
     agent = new FakeAgent(null);
     await agent.start();
@@ -341,29 +408,37 @@ describe("push path: phantom launch guard", () => {
     }
   });
 
-  it("kills a launcher child that outlives a forwarder and reports NO_INSTANCE", async () => {
-    // AfterFX.exe that never exits = it is booting an instance of its own
-    // (nothing registered to receive -r: none running, or only -m ones). Left
-    // alone it would run the request on an empty project and report success.
-    const launcher = recordingSpawn(() => {});
-    const transport = new FileIpcTransport({ instance: null, spawn: launcher.spawn });
-    const started = Date.now();
-    const res = await transport.execute({ code: "return 1;", label: "phantom", timeoutMs: 30_000 });
-    const elapsed = Date.now() - started;
+  itUnlessDarwin(
+    "kills a launcher child that outlives a forwarder and reports NO_INSTANCE",
+    async () => {
+      // AfterFX.exe that never exits = it is booting an instance of its own
+      // (nothing registered to receive -r: none running, or only -m ones). Left
+      // alone it would run the request on an empty project and report success.
+      const launcher = recordingSpawn(() => {});
+      const transport = new FileIpcTransport({ instance: null, spawn: launcher.spawn });
+      const started = Date.now();
+      const res = await transport.execute({
+        code: "return 1;",
+        label: "phantom",
+        timeoutMs: 30_000,
+      });
+      const elapsed = Date.now() - started;
 
-    expect(res.ok).toBe(false);
-    expect(res.errorCode).toBe("NO_INSTANCE");
-    expect(res.error).toContain("booting");
-    expect(res.error).toContain("-m");
-    expect(res.error).toContain("install-agent");
-    // Decided at PHANTOM_LAUNCH_MS, not at the deadline.
-    expect(elapsed).toBeGreaterThanOrEqual(PHANTOM_LAUNCH_MS - 200);
-    expect(elapsed).toBeLessThan(PHANTOM_LAUNCH_MS + 3_000);
-    // One launch only — relaunching would have booted a second throwaway AE.
-    expect(launcher.calls).toBe(1);
-    expect(launcher.children[0].killed).toBe(true);
-    await expect(fs.access(BUSY_LOCK_PATH)).rejects.toThrow();
-  }, 15_000);
+      expect(res.ok).toBe(false);
+      expect(res.errorCode).toBe("NO_INSTANCE");
+      expect(res.error).toContain("booting");
+      expect(res.error).toContain("-m");
+      expect(res.error).toContain("install-agent");
+      // Decided at PHANTOM_LAUNCH_MS, not at the deadline.
+      expect(elapsed).toBeGreaterThanOrEqual(PHANTOM_LAUNCH_MS - 200);
+      expect(elapsed).toBeLessThan(PHANTOM_LAUNCH_MS + 3_000);
+      // One launch only — relaunching would have booted a second throwaway AE.
+      expect(launcher.calls).toBe(1);
+      expect(launcher.children[0].killed).toBe(true);
+      await expect(fs.access(BUSY_LOCK_PATH)).rejects.toThrow();
+    },
+    15_000,
+  );
 
   it("treats a child that exits promptly as a forwarder and keeps relaunching", async () => {
     // The real forwarder hands the script over and exits within a second;
@@ -382,4 +457,56 @@ describe("push path: phantom launch guard", () => {
     expect(launcher.calls).toBe(2);
     expect(launcher.children.every((c) => !c.killed)).toBe(true);
   }, 10_000);
+
+  it("stops relaunching once a dialog is what blocks the script", async () => {
+    // Each -r into an AE that shows a modal adds a "Cannot run a script
+    // while a modal dialog is waiting for response" alert on top of it.
+    const launcher = recordingSpawn((child) => {
+      setTimeout(() => child.emit("exit", 0), 30);
+    });
+    const transport = new FileIpcTransport({
+      instance: null,
+      spawn: launcher.spawn,
+      // Visible only once the first launch is out, whatever else the real
+      // mailbox holds: this is about the relaunch, not the pre-launch check.
+      scanDialogs: async () => (launcher.calls > 0 ? [DIALOG] : []),
+    });
+    const res = await transport.execute({
+      code: "return 1;",
+      label: "modal_push",
+      timeoutMs: 20_000,
+    });
+    expect(res.errorCode).toBe("DIALOG_OPEN");
+    expect(res.error).toContain("after 1 launch attempt");
+    expect(res.dialogs).toEqual([DIALOG]);
+    expect(launcher.calls).toBe(1);
+    await expect(fs.access(BUSY_LOCK_PATH)).rejects.toThrow();
+  }, 15_000);
+
+  it("does not launch at all when a stale agent sits behind a dialog", async () => {
+    // The 2026-09-15 report: the agent stopped ticking behind a modal, the
+    // server fell back to push, and three -r launches stacked three alerts.
+    const stale = new FakeAgent(null);
+    await stale.start();
+    stale.pause();
+    await stale.heartbeat({ ts: Date.now() - HEARTBEAT_STALE_MS - 1000 });
+    try {
+      const launcher = recordingSpawn(() => {});
+      const transport = new FileIpcTransport({
+        instance: null,
+        spawn: launcher.spawn,
+        scanDialogs: seesDialog,
+      });
+      const res = await transport.execute({
+        code: "return 1;",
+        label: "stale_push",
+        timeoutMs: 20_000,
+      });
+      expect(res.errorCode).toBe("DIALOG_OPEN");
+      expect(res.error).toContain("nothing was sent");
+      expect(launcher.calls).toBe(0);
+    } finally {
+      await stale.stop();
+    }
+  });
 });

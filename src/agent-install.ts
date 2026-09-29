@@ -7,8 +7,7 @@
 //   Windows  %APPDATA%\Adobe\After Effects\<major.minor>\Scripts\Startup
 //   macOS    ~/Library/Preferences/Adobe/After Effects/<major.minor>/Scripts/Startup
 //
-// (Windows verified on AE 26.3; the macOS path follows Adobe's documented
-// per-user layout and is not yet verified here.) One folder per AE version,
+// (Windows verified on AE 26.3, macOS on AE 26.5 / macOS 26.4.) One folder per AE version,
 // so an AE update means running `install-agent` again.
 //
 // What lands there is a STUB, not the agent: a few lines that pin the mailbox

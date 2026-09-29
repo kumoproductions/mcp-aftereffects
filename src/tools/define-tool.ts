@@ -71,6 +71,7 @@ export function jsxReportedFailure(result: unknown): { error: string } | null {
 export function toMcpResult(result: EvalResult): ToolResult {
   if (!result.ok) {
     return errorResult(result.errorCode ?? "TRANSPORT", result.error ?? "unknown failure", {
+      ...(result.dialogs?.length ? { details: { dialogs: result.dialogs } } : {}),
       stack: result.stack,
       logs: result.logs,
       durationMs: result.durationMs,

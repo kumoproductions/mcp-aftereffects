@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Modal dialogs are detected and named.** While After Effects shows a modal dialog no script runs, and the dialog is often hidden behind the main window, so calls used to fail with a bare TIMEOUT or NO_INSTANCE. On Windows the server now reads the dialog from outside the process and fails with the new `DIALOG_OPEN` code, quoting its text (`details.dialogs` carries the process, window title and handle). `instance.dialogs` lists what every running After Effects is showing, and `instance.dismiss_dialog { id }` closes one with Escape — its cancel action, so a warning is acknowledged and a "Save changes before closing?" prompt is cancelled (project left open and unsaved), never answered. `instance.start` reports a dialog that kept the new instance from registering the same way.
+- **Dialog detection on macOS.** With Accessibility permission for the app running the server, every modal After Effects window is found (`AXModal`) with its text, and `instance.dismiss_dialog` closes it with Escape as on Windows — the dialog is focused inside After Effects first, without bringing it to the front — so a save prompt is cancelled and a warning acknowledged. Without the permission, windows at levels 8 and 101 are reported with empty text (`accessibility: false`) and cannot be dismissed. System Events is not used. Verified on AE 26.5 / macOS 26.4: while a dialog is up DoScript blocks until its timeout without stacking alerts, a timed-out script does not run later, and the agent resumes on its own once the dialog is closed. `instance.start` on macOS works with `open -n` (verified: a second instance registers) and now returns `pid: null`, since the pid it spawns is `open`'s.
+
+### Fixed
+
+- **Calls no longer stack "Cannot run a script while a modal dialog is waiting for response" alerts.** An agent stuck behind a dialog stops ticking, and the server then fell back to the `-r` push path: each of its three launch attempts added another alert that had to be clicked away. The push path now looks for dialogs before it launches when an agent has gone stale, and before every relaunch, and stops with `DIALOG_OPEN` instead. Verified on AE 26.5: the agent resumes on its own once the dialog is closed.
+
 ## [0.3.0] - 2026-09-28
 
 ### Added

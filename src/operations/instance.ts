@@ -28,6 +28,14 @@ import {
 import { jsxFail, jsxVal, registerOp } from "../registry.js";
 import type { AeTransport } from "../transport/AeTransport.js";
 import {
+  ACCESSIBILITY_HINT,
+  dialogBlockMessage,
+  dialogHint,
+  dialogScanSupported,
+  dismissAeDialog,
+  scanAeDialogs,
+} from "../transport/dialogs.js";
+import {
   type InstanceInfo,
   describeInstance,
   instanceLabel,
@@ -221,6 +229,9 @@ registerOp({
     }
 
     const plan = buildInstanceLaunchPlan(exe, name);
+    // On macOS the spawned process is `open`, which exits at once; the
+    // After Effects it starts has a pid of its own that we never learn.
+    const aePid = process.platform === "darwin" ? null : undefined;
     const launchedAt = Date.now();
     let spawnError: Error | null = null;
     const child = spawn(plan.command, plan.args, {
@@ -257,8 +268,22 @@ registerOp({
       await sleep(500);
     }
     if (registered === null) {
+      // Windows: the spawned process IS the instance. macOS: `open -n` exits
+      // at once, so the instance is the After Effects that launched since.
+      const dialogs = (await scanAeDialogs()).filter(
+        (d) => d.pid === child.pid || (d.startedAt ?? 0) >= launchedAt - 2_000,
+      );
+      if (dialogs.length > 0) {
+        return {
+          ...fail(
+            `instance '${name}' did not register within ${timeoutMs} ms: ${dialogBlockMessage(dialogs)}`,
+            { errorCode: "DIALOG_OPEN", hint: dialogHint(dialogs) },
+          ),
+          dialogs,
+        };
+      }
       return fail(
-        `instance '${name}' did not register within ${timeoutMs} ms (After Effects was launched, pid ${child.pid ?? "?"})`,
+        `instance '${name}' did not register within ${timeoutMs} ms (After Effects was launched${aePid === null ? "" : `, pid ${child.pid ?? "?"}`})`,
         {
           errorCode: "NO_INSTANCE",
           hint:
@@ -298,7 +323,7 @@ registerOp({
     return {
       ok: true,
       instance: name,
-      pid: child.pid ?? null,
+      pid: aePid === null ? null : (child.pid ?? null),
       startupMs: Date.now() - launchedAt,
       project: opened,
       // Forward slashes, like every other path this server reports.
@@ -415,6 +440,80 @@ registerOp({
     }
     await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
     return { ok: true, instance: name, stopped: true, saved: !!args.save, file };
+  },
+});
+
+registerOp({
+  name: "instance.dialogs",
+  category: "instance",
+  description:
+    "List the modal dialogs every running After Effects is showing — the message text, the owning process " +
+    "and its window title, and an id for instance.dismiss_dialog. While a dialog is open no script runs " +
+    "(calls fail with DIALOG_OPEN, or an instance stops ticking), and the dialog is often hidden behind the " +
+    "main window. Windows and macOS. On macOS the text is read only with Accessibility permission for the " +
+    "app running this server; without it dialogs are still listed, with empty text (`accessibility: false`).",
+  params: [],
+  readOnly: true,
+  toJsx: () => nodeOnly("instance.dialogs"),
+  async run() {
+    const dialogs = await scanAeDialogs();
+    return {
+      ok: true,
+      dialogs,
+      supported: dialogScanSupported(),
+    };
+  },
+});
+
+registerOp({
+  name: "instance.dismiss_dialog",
+  category: "instance",
+  description:
+    "Close a modal dialog After Effects is showing by its cancel action (what Escape does). A warning " +
+    "(missing files or fonts, a script alert) is acknowledged; a question is cancelled, never answered: " +
+    '"Save changes before closing?" leaves the project open and unsaved. Take `id` from instance.dialogs ' +
+    "or from a DIALOG_OPEN error's details.dialogs. When the user wants a dialog answered some other way " +
+    "(Save, Replace…), ask them to click it. Windows and macOS; on macOS it needs Accessibility permission. " +
+    "A dialog Escape does not close is left open unless it has a single button (an OK-only warning), " +
+    "which is pressed.",
+  params: [
+    {
+      name: "id",
+      type: "string",
+      description: "The dialog's id, as listed by instance.dialogs",
+      required: true,
+    },
+  ],
+  toJsx: () => nodeOnly("instance.dismiss_dialog"),
+  async run(args) {
+    if (!dialogScanSupported()) {
+      return fail("instance.dismiss_dialog is only available on Windows and macOS");
+    }
+    const id = typeof args.id === "string" ? args.id.trim() : "";
+    const r = await dismissAeDialog(id);
+    if (r.reason === "no_permission") {
+      return fail(`cannot close After Effects dialog ${id}: no Accessibility permission`, {
+        hint: ACCESSIBILITY_HINT,
+      });
+    }
+    if (!r.posted) {
+      return fail(
+        `no After Effects dialog with id ${JSON.stringify(id)} is open — it may already be closed`,
+        { hint: "Call instance.dialogs for the current list." },
+      );
+    }
+    const remaining = await scanAeDialogs();
+    return {
+      ok: true,
+      dismissed: { id, text: r.text },
+      closed: r.closed,
+      remaining,
+      ...(r.closed
+        ? {}
+        : {
+            hint: "The dialog did not close on its cancel action — ask the user to answer it in After Effects.",
+          }),
+    };
   },
 });
 
