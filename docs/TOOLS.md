@@ -10,13 +10,13 @@ Generated from `src/tools/**` via `npm run docs:tools` — do not edit by hand. 
 
 Read-only project/comp/layer introspection.
 
-| Tool              | Description                                                                                                                                                  |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `ae_project_info` | Project-level info: file path, dirty flag, all items with type/summary, active item.                                                                         |
-| `ae_comp_info`    | Detailed comp info: size, fps, duration, work area, motion blur, layer summaries.                                                                            |
-| `ae_layer_info`   | Full layer info: transform, effects, masks, text, shape contents, keyframes (incl.                                                                           |
-| `ae_version_info` | AE version, build, capabilities (saveFrameToPng, app.effects, Socket).                                                                                       |
-| `ae_context`      | Ambient context: project state, active comp, selected layers, item list, AE.\* helpers, ES3 rules, and the undo contract (every call = one auto undo group). |
+| Tool              | Description                                                                                                                                                 |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ae_project_info` | Project-level info: file path, dirty flag, all items with type/summary, active item.                                                                        |
+| `ae_comp_info`    | Detailed comp info: size, fps, duration, work area, motion blur, layer summaries.                                                                           |
+| `ae_layer_info`   | Full layer info: transform, effects, masks, text, shape contents, keyframes (incl.                                                                          |
+| `ae_version_info` | AE version, build, capabilities (saveFrameToPng, app.effects, Socket).                                                                                      |
+| `ae_context`      | Ambient context: project state, active comp, selected layers, item list, AE.* helpers, ES3 rules, and the undo contract (every call = one auto undo group). |
 
 ## Document
 
