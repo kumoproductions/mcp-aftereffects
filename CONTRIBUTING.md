@@ -241,9 +241,7 @@ Generated code is a function body: end with `return { ok: true, ... };` (or `{ o
      title: "My Tool",
      description: "What it does, plus examples that help an LLM pick it.",
      group: "inspect", // inspect | document | render | operations
-     inputShape: {
-       /* zod schema */
-     },
+     inputShape: {/* zod schema */},
      handler: async (args, transport) => {
        const code = `
            // ES3 only — see above. Embed args via jsxVal(...).
