@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **`batch.run` counts a child that failed on a layer.** Operations that report per layer (`property.set`, `transform.set` and the other ops returning a `layers` list) return `ok: true` even when a layer in that list came back `ok: false`, so a batch reported `failed: 0` and `stopOnError` carried on past the failure. The batch now counts such a child as failed, which sets `ok: false`, the error text and `failed`, and stops the batch under `stopOnError`. Child results are returned unchanged.
+
 ## [0.3.2] - 2026-10-16
 
 ### Security
