@@ -115,7 +115,7 @@ registerOp({
                 if (!_stopped) {
                     try {
                         var _r${i} = (function() { ${jsx} })();
-                        if (_r${i} && _r${i}.ok === false) { _failed++; ${stopOnError ? `_stopped = true;` : ""} }
+                        if (_childFailed(_r${i})) { _failed++; ${stopOnError ? `_stopped = true;` : ""} }
                         _results.push(_r${i});
                     } catch(e) {
                         _failed++;
@@ -131,6 +131,19 @@ registerOp({
     return `
             var _results = [];
             var _failed = 0;
+            // A child fails when it says so, or when it reports per layer
+            // (property.set, transform.set, ...) and any layer came back
+            // ok: false while the child itself still said ok: true.
+            function _childFailed(r) {
+                if (!r) return false;
+                if (r.ok === false) return true;
+                if (r.layers && r.layers.length) {
+                    for (var _k = 0; _k < r.layers.length; _k++) {
+                        if (r.layers[_k] && r.layers[_k].ok === false) return true;
+                    }
+                }
+                return false;
+            }
             var _stopped = false;
             ${opBlocks.join("\n")}
             return {
